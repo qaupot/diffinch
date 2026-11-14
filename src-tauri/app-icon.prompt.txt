@@ -1,0 +1,16 @@
+Generated and edited with the built-in imagegen tool.
+
+Latest edit prompt:
+Use case: precise-object-edit.
+Edit target: the supplied Diffinch application icon.
+Remove the thin dark border line and the ragged blue fringe around the OUTER rounded-square perimeter. The blue rounded tile must end in a perfectly smooth clean antialiased edge against actual transparency, with NO stroke, NO outline, NO dark keyline, NO rim, NO halo, NO shadow, and NO stray pixels. Do not remove the blue rounded-square background itself. Keep its blue-to-indigo gradient, proportions, corner radius, and padding. Keep the existing large white right-facing bird, blue circular eye, lavender curved wing, and three-node lavender Git branch exactly the same in shape, size and placement. Change ONLY the unwanted perimeter border and edge artifacts. Export the finished clean square app icon with transparent corners. No text, no mockup.
+
+Export: PNG sizes use macOS sips for alpha-aware resizing. ICNS and ICO embed those PNGs directly to avoid dark borders from interpolating transparent RGB pixels.
+
+Original generation prompt:
+
+Use case: precise-object-edit.
+Asset type: production Diffinch desktop application icon.
+Input image: existing app icon, edit target and visual identity reference.
+Primary request: make a polished version of this same white finch perched on a stylized Git branch diagram, retaining the blue rounded-square tile. Keep the bird large and recognizable, occupying approximately 72% of the canvas width. Use the same right-facing white bird silhouette, blue circular eye, lavender curved wing mark, and simple clean flat vector style. Move the bird slightly up to leave room beneath it for a Git branch symbol. The Git symbol should be a compact bold lavender branching line with exactly three circular nodes: a lower-left root node connects upward to a fork, which separates to an upper-left node and upper-right node. Give the right fork a smooth curve, like the familiar git-branch icon, rotated as needed into a wide perch beneath the bird. The bird should feel perched naturally on the upper horizontal part of this symbolic branch. It is a software Git branching diagram, not a realistic tree branch. Keep the bird and Git motif visually distinct and readable as a unified icon at 32px. Center and balance the combined design inside the existing blue-to-indigo rounded-square tile, with generous safe margins.
+Constraints: Preserve the original blue gradient palette and rounded-square corner shape. Smooth mathematically clean silhouettes, solid fills, smooth subtle gradient, crisp antialiased edges. The tile interior is fully opaque and only the area outside the rounded square is transparent. No outlines around the tile, no stray edge pixels, no noise, no texture, no drop shadows, no text, no letters, no extra icons, no realistic twigs or leaves. Output only the finished square app icon, no mockup.

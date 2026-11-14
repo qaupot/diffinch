@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Diffinch",
+  "version": "0.1.0",
+  "identifier": "app.diffinch.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:42967",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "appDirectoriesOverride": {
+      "data": "$DATA/Diffinch"
+    },
+    "windows": [
+      {
+        "title": "Diffinch",
+        "label": "main",
+        "width": 1400,
+        "height": 910,
+        "minWidth": 820,
+        "minHeight": 620,
+        "resizable": true,
+        "maximizable": true,
+        "titleBarStyle": "Overlay",
+        "trafficLightPosition": { "x": 21, "y": 23 },
+        "hiddenTitle": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: asset:; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "A desktop client for Git",
+    "resources": {
+      "../THIRD_PARTY_NOTICES.txt": "THIRD_PARTY_NOTICES.txt",
+      "../LICENSE": "LICENSE"
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

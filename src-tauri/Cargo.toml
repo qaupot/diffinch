@@ -1,0 +1,26 @@
+[package]
+name = "diffinch"
+version = "0.1.0"
+description = "A desktop client for Git"
+license = "MIT"
+edition = "2021"
+rust-version = "1.99.1"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+base64 = "0.22"
+notify = { version = "8.2.2", default-features = false, features = ["macos_fsevent"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-store = "2.5.1"
+tempfile = "3"
+
+[target."cfg(unix)".dependencies]
+libc = "0.2"

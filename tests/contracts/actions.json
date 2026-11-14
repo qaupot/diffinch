@@ -1,0 +1,530 @@
+[
+  {
+    "kind": "stage",
+    "id": "tracked:bm90ZXMudHh0"
+  },
+  {
+    "kind": "unstage",
+    "id": "tracked:bm90ZXMudHh0"
+  },
+  {
+    "kind": "discard",
+    "id": "tracked:bm90ZXMudHh0",
+    "token": "opaque-discard-token"
+  },
+  {
+    "kind": "stageFiles",
+    "ids": ["tracked:bm90ZXMudHh0"]
+  },
+  {
+    "kind": "unstageFiles",
+    "ids": ["tracked:bm90ZXMudHh0"]
+  },
+  {
+    "kind": "stageAll"
+  },
+  {
+    "kind": "unstageAll"
+  },
+  {
+    "kind": "fetch"
+  },
+  {
+    "kind": "fetchPrune"
+  },
+  {
+    "kind": "pull"
+  },
+  {
+    "kind": "pullRebase",
+    "target": {
+      "branch": "main",
+      "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  {
+    "kind": "push"
+  },
+  {
+    "kind": "continueOperation"
+  },
+  {
+    "kind": "skipRebase"
+  },
+  {
+    "kind": "abortOperation"
+  },
+  {
+    "kind": "hunk",
+    "id": "tracked:bm90ZXMudHh0",
+    "staged": false,
+    "index": 0,
+    "token": "token",
+    "page": 0,
+    "lines": [1]
+  },
+  {
+    "kind": "resolveConflict",
+    "id": "tracked:bm90ZXMudHh0",
+    "token": "token",
+    "text": "resolved\n"
+  },
+  {
+    "kind": "commit",
+    "summary": "Summary",
+    "description": "Body",
+    "sign": false,
+    "amend": null
+  },
+  {
+    "kind": "commit",
+    "summary": "Summary",
+    "description": "Body",
+    "sign": false,
+    "amend": {
+      "branch": "main",
+      "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  {
+    "kind": "commit",
+    "summary": "Summary",
+    "description": "Body",
+    "sign": false,
+    "amend": {
+      "branch": null,
+      "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  {
+    "kind": "changeAuthor",
+    "branch": "main",
+    "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "name": "Updated Author",
+    "email": "updated@example.invalid"
+  },
+  {
+    "kind": "publish",
+    "remote": "origin"
+  },
+  {
+    "kind": "forcePush",
+    "lease": {
+      "branch": "main",
+      "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "remote": "origin",
+      "target": "refs/heads/main",
+      "expected": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "destination": "opaque-push-destination"
+    }
+  },
+  {
+    "kind": "createBranch",
+    "name": "topic",
+    "checkout": true,
+    "start": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+    "kind": "createWorktree",
+    "parent": "/workspace",
+    "name": "topic",
+    "mode": "newBranch",
+    "branch": "topic",
+    "start": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+    "kind": "createWorktree",
+    "parent": "/workspace",
+    "name": "topic",
+    "mode": "existingBranch",
+    "branch": "topic",
+    "start": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+    "kind": "createWorktree",
+    "parent": "/workspace",
+    "name": "topic",
+    "mode": "detached",
+    "branch": "topic",
+    "start": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+    "kind": "removeWorktree",
+    "path": "/workspace/topic",
+    "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "branch": "topic"
+  },
+  {
+    "kind": "switchBranch",
+    "name": "topic",
+    "remote": false
+  },
+  {
+    "kind": "merge",
+    "name": "topic",
+    "remote": false,
+    "target": {
+      "branch": "main",
+      "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "tip": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  {
+    "kind": "rebase",
+    "name": "topic",
+    "remote": false,
+    "target": {
+      "branch": "main",
+      "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "tip": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  {
+    "kind": "interactiveRebase",
+    "branch": "main",
+    "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "base": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "fromRoot": false,
+    "steps": [
+      {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "operation": "pick"
+      },
+      {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "operation": "reword",
+        "message": "New message"
+      },
+      {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "operation": "squash"
+      },
+      {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "operation": "fixup"
+      },
+      {
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "operation": "drop"
+      }
+    ]
+  },
+  {
+    "kind": "createTag",
+    "name": "v0.1.0",
+    "start": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+    "kind": "deleteBranch",
+    "name": "topic"
+  },
+  {
+    "kind": "deleteTag",
+    "name": "topic"
+  },
+  {
+    "kind": "removeRemote",
+    "name": "topic"
+  },
+  {
+    "kind": "deleteRemoteRef",
+    "refKind": "branch",
+    "remote": "origin",
+    "name": "topic",
+    "tip": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "destination": "opaque-destination"
+  },
+  {
+    "kind": "deleteRemoteRef",
+    "refKind": "tag",
+    "remote": "origin",
+    "name": "topic",
+    "tip": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "destination": "opaque-destination"
+  },
+  {
+    "kind": "cherryPick",
+    "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "target": {
+      "branch": "main",
+      "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  {
+    "kind": "revert",
+    "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "target": {
+      "branch": "main",
+      "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  {
+    "kind": "applyStash",
+    "id": "stash@{0}",
+    "tip": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+    "kind": "popStash",
+    "id": "stash@{0}",
+    "tip": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+    "kind": "dropStash",
+    "id": "stash@{0}",
+    "tip": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+    "kind": "stash",
+    "message": "Work in progress",
+    "includeUntracked": true
+  },
+  {
+    "kind": "addRemote",
+    "name": "origin",
+    "url": "https://example.invalid/repo.git"
+  },
+  {
+    "kind": "saveSettings",
+    "settings": {
+      "name": "Contract Author",
+      "email": "author+contract@example.invalid",
+      "signCommits": false,
+      "signingFormat": "openpgp",
+      "signingKey": ""
+    }
+  },
+  {
+    "kind": "repositoryTool",
+    "action": {
+      "kind": "addSubmodule",
+      "url": "https://example.invalid/repo.git",
+      "path": "lib/repo",
+      "branch": "main"
+    }
+  },
+  {
+    "kind": "repositoryTool",
+    "action": {
+      "kind": "updateSubmodule",
+      "path": null,
+      "remote": false
+    }
+  },
+  {
+    "kind": "repositoryTool",
+    "action": {
+      "kind": "syncSubmodules"
+    }
+  },
+  {
+    "kind": "repositoryTool",
+    "action": {
+      "kind": "lfsInstall"
+    }
+  },
+  {
+    "kind": "repositoryTool",
+    "action": {
+      "kind": "lfsTrack",
+      "pattern": "*.png",
+      "untrack": false
+    }
+  },
+  {
+    "kind": "repositoryTool",
+    "action": {
+      "kind": "subtree",
+      "operation": "add",
+      "prefix": "vendor/lib",
+      "remote": "origin",
+      "branch": "main",
+      "squash": true
+    }
+  },
+  {
+    "kind": "repositoryTool",
+    "action": {
+      "kind": "subtree",
+      "operation": "pull",
+      "prefix": "vendor/lib",
+      "remote": "origin",
+      "branch": "main",
+      "squash": true
+    }
+  },
+  {
+    "kind": "repositoryTool",
+    "action": {
+      "kind": "subtree",
+      "operation": "push",
+      "prefix": "vendor/lib",
+      "remote": "origin",
+      "branch": "main",
+      "squash": true
+    }
+  },
+  {
+    "kind": "repositoryTool",
+    "action": {
+      "kind": "subtree",
+      "operation": "split",
+      "prefix": "vendor/lib",
+      "remote": "origin",
+      "branch": "main",
+      "squash": true
+    }
+  },
+  {
+    "kind": "repositoryTool",
+    "action": {
+      "kind": "lfsTransfer",
+      "operation": "fetch",
+      "remote": "origin"
+    }
+  },
+  {
+    "kind": "repositoryTool",
+    "action": {
+      "kind": "lfsTransfer",
+      "operation": "pull",
+      "remote": "origin"
+    }
+  },
+  {
+    "kind": "repositoryTool",
+    "action": {
+      "kind": "lfsTransfer",
+      "operation": "checkout",
+      "remote": "origin"
+    }
+  },
+  {
+    "kind": "configureCredentialHelper",
+    "remote": "origin",
+    "destination": "opaque-destination",
+    "helper": "osxkeychain",
+    "token": "opaque-helper-token"
+  },
+  {
+    "kind": "configureCredentialHelper",
+    "remote": "origin",
+    "destination": "opaque-destination",
+    "helper": "manager",
+    "token": "opaque-helper-token"
+  },
+  {
+    "kind": "configureCredentialHelper",
+    "remote": "origin",
+    "destination": "opaque-destination",
+    "helper": "manager-core",
+    "token": "opaque-helper-token"
+  },
+  {
+    "kind": "configureCredentialHelper",
+    "remote": "origin",
+    "destination": "opaque-destination",
+    "helper": "libsecret",
+    "token": "opaque-helper-token"
+  },
+  {
+    "kind": "configureCredentialHelper",
+    "remote": "origin",
+    "destination": "opaque-destination",
+    "helper": "wincred",
+    "token": "opaque-helper-token"
+  },
+  {
+    "kind": "configureCredentialHelper",
+    "remote": "origin",
+    "destination": "opaque-destination",
+    "helper": "cache",
+    "token": "opaque-helper-token"
+  },
+  {
+    "kind": "configureCredentialHelper",
+    "remote": "origin",
+    "destination": "opaque-destination",
+    "helper": null,
+    "token": "opaque-helper-token"
+  },
+  {
+    "command": "credential_account",
+    "request": {
+      "remote": "origin",
+      "destination": "opaque-destination"
+    }
+  },
+  {
+    "kind": "openEditor",
+    "file": "src/main.rs",
+    "editor": {
+      "program": "code",
+      "args": ["--reuse-window"]
+    }
+  },
+  {
+    "kind": "mergeTool",
+    "id": "file:opaque"
+  },
+  {
+    "command": "git_action",
+    "request": {
+      "id": "operation-123",
+      "action": {
+        "kind": "push"
+      }
+    }
+  },
+  {
+    "command": "inspect_file",
+    "request": {
+      "kind": "catalog",
+      "revision": "HEAD"
+    }
+  },
+  {
+    "command": "inspect_file",
+    "request": {
+      "kind": "history",
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "file": "renamed file.txt",
+      "limit": 100
+    }
+  },
+  {
+    "command": "inspect_file",
+    "request": {
+      "kind": "blame",
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "file": "renamed file.txt",
+      "page": 1
+    }
+  },
+  {
+    "command": "inspect_file",
+    "request": {
+      "kind": "diff",
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "file": "new.txt",
+      "previousPath": "old.txt",
+      "options": {
+        "page": 0,
+        "ignoreWhitespace": false
+      }
+    }
+  },
+  {
+    "command": "inspect_file",
+    "request": {
+      "kind": "diff",
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "file": "file.txt",
+      "previousPath": null,
+      "options": {
+        "page": 1,
+        "ignoreWhitespace": true
+      }
+    }
+  }
+]

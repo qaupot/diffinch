@@ -1,0 +1,185 @@
+export const credentialMessages = {
+  credentials: ["Credentials", "인증 정보", "認証情報"],
+  checkCredentialAccount: ["Check saved account", "저장된 계정 확인", "保存済みアカウントを確認"],
+  checkingCredentialAccount: [
+    "Checking saved account…",
+    "저장된 계정 확인 중…",
+    "保存済みアカウントを確認中…",
+  ],
+  savedCredentialUsername: ["Saved username", "저장된 사용자 이름", "保存済みユーザー名"],
+  credentialAccountHelp: [
+    "Shows the username Git’s helper returns for this destination. Your credential store may ask to unlock. This does not verify repository access.",
+    "Git 도우미가 이 대상에 반환하는 사용자 이름을 표시합니다. 인증 저장소의 잠금 해제를 요청할 수 있습니다. 저장소 접근 권한은 확인하지 않습니다.",
+    "Git ヘルパーがこの接続先に返すユーザー名を表示します。認証情報ストアのロック解除を求められる場合があります。リポジトリへのアクセス権は確認しません。",
+  ],
+  credentialAccountNotReturned: [
+    "No saved account was returned. The helper may have no matching credentials, need unlocking, or require sign-in.",
+    "저장된 계정을 받지 못했습니다. 일치하는 인증 정보가 없거나, 도우미의 잠금 해제 또는 로그인이 필요할 수 있습니다.",
+    "保存済みアカウントが返されませんでした。一致する認証情報がないか、ヘルパーのロック解除またはサインインが必要な可能性があります。",
+  ],
+  credentialAccountFailed: [
+    "Could not check the saved account. Check your credential helper and try again.",
+    "저장된 계정을 확인하지 못했습니다. 인증 도우미를 확인한 뒤 다시 시도하세요.",
+    "保存済みアカウントを確認できませんでした。認証ヘルパーを確認して再試行してください。",
+  ],
+  credentialAccountTimedOut: [
+    "The credential helper did not respond in time. Unlock your credential store if needed, then try again.",
+    "인증 도우미가 제시간에 응답하지 않았습니다. 필요한 경우 인증 저장소의 잠금을 해제한 뒤 다시 시도하세요.",
+    "認証ヘルパーが時間内に応答しませんでした。必要に応じて認証情報ストアのロックを解除し、再試行してください。",
+  ],
+  credentialHelper: ["Credential helper", "인증 도우미", "認証ヘルパー"],
+  credentialHelperInherited: [
+    "Use inherited Git settings",
+    "기존 Git 설정 상속",
+    "既存の Git 設定を継承",
+  ],
+  credentialHelperCustom: [
+    "Current custom configuration",
+    "현재 사용자 지정 설정",
+    "現在のカスタム設定",
+  ],
+  credentialHelperKeychain: ["macOS Keychain", "macOS 키체인", "macOS キーチェーン"],
+  credentialHelperManager: [
+    "Git Credential Manager",
+    "Git Credential Manager",
+    "Git Credential Manager",
+  ],
+  credentialHelperManagerCore: [
+    "Git Credential Manager Core",
+    "Git Credential Manager Core",
+    "Git Credential Manager Core",
+  ],
+  credentialHelperLibsecret: [
+    "Secret Service (libsecret)",
+    "Secret Service (libsecret)",
+    "Secret Service (libsecret)",
+  ],
+  credentialHelperWincred: [
+    "Windows Credential Manager (wincred)",
+    "Windows 자격 증명 관리자 (wincred)",
+    "Windows 資格情報マネージャー (wincred)",
+  ],
+  credentialHelperCache: [
+    "Memory cache (temporary)",
+    "메모리 캐시 (임시)",
+    "メモリキャッシュ（一時保存）",
+  ],
+  applyCredentialHelper: ["Apply helper", "도우미 적용", "ヘルパーを適用"],
+  credentialHelperSetupHelp: [
+    "Choose an installed helper for this destination in this repository, or inherit your existing Git settings. Changing helpers does not move saved credentials.",
+    "이 저장소의 선택한 대상에 사용할 설치된 도우미를 선택하거나 기존 Git 설정을 상속하세요. 도우미를 변경해도 저장된 인증 정보는 이동하지 않습니다.",
+    "このリポジトリの接続先に使うインストール済みのヘルパーを選択するか、既存の Git 設定を継承します。ヘルパーを変更しても保存済みの認証情報は移動しません。",
+  ],
+  credentialHelperSaved: [
+    "Credential helper settings saved. You can now save credentials or retry the remote operation.",
+    "인증 도우미 설정을 저장했습니다. 인증 정보를 저장하거나 원격 작업을 다시 시도하세요.",
+    "認証ヘルパー設定を保存しました。認証情報を保存するか、リモート操作を再試行してください。",
+  ],
+  credentialHelperChanged: [
+    "Credential helper settings changed elsewhere. Close and reopen Credentials before trying again.",
+    "다른 곳에서 인증 도우미 설정이 변경되었습니다. 인증 정보 창을 닫고 다시 연 뒤 시도하세요.",
+    "認証ヘルパー設定が別の場所で変更されました。認証情報の画面を開き直して再試行してください。",
+  ],
+  credentialHelperUnavailable: [
+    "Git can no longer find this helper. Install it or choose another helper, then reopen Credentials.",
+    "Git에서 이 도우미를 찾을 수 없습니다. 도우미를 설치하거나 다른 도우미를 선택한 뒤 인증 정보 창을 다시 여세요.",
+    "Git がこのヘルパーを見つけられません。インストールするか別のヘルパーを選択し、認証情報の画面を開き直してください。",
+  ],
+  credentialHelperFailed: [
+    "Git could not read or update credential helper settings. Check that the repository configuration is accessible, then reopen Credentials.",
+    "Git 인증 도우미 설정을 읽거나 변경하지 못했습니다. 저장소 설정에 접근할 수 있는지 확인한 뒤 인증 정보 창을 다시 여세요.",
+    "Git の認証ヘルパー設定を読み取り、または更新できませんでした。リポジトリ設定にアクセスできることを確認し、認証情報の画面を開き直してください。",
+  ],
+  remoteCredentials: ["Credentials for {name}", "{name} 인증 정보", "{name} の認証情報"],
+  authenticationRequired: [
+    "Git needs credentials for this remote. Open Repository → Remotes → Credentials, save your username and access token, then retry. GitHub requires a personal access token instead of your account password.",
+    "이 원격 저장소에 인증 정보가 필요합니다. 저장소 → 원격 저장소 → 인증 정보에서 사용자 이름과 액세스 토큰을 저장한 뒤 다시 시도하세요. GitHub에는 계정 비밀번호 대신 개인 액세스 토큰을 사용해야 합니다.",
+    "このリモートには認証情報が必要です。リポジトリ → リモート → 認証情報でユーザー名とアクセストークンを保存してから再試行してください。GitHub ではアカウントのパスワードではなく個人アクセストークンが必要です。",
+  ],
+  credentialSignInHelp: [
+    "Git could not authenticate. Save credentials for the remote and destination you were using, then retry the operation. For GitHub, use your username and a personal access token with access to the repository.",
+    "Git 인증에 실패했습니다. 사용 중인 원격 저장소와 대상의 인증 정보를 저장한 뒤 작업을 다시 시도하세요. GitHub에는 사용자 이름과 해당 저장소에 접근할 수 있는 개인 액세스 토큰을 사용하세요.",
+    "Git の認証に失敗しました。使用していたリモートと接続先の認証情報を保存してから再試行してください。GitHub ではユーザー名と、このリポジトリにアクセスできる個人アクセストークンを使用してください。",
+  ],
+  loadingCredentials: [
+    "Loading remote authentication settings…",
+    "원격 인증 설정 불러오는 중…",
+    "リモート認証設定を読み込み中…",
+  ],
+  credentialDestination: ["Destination", "대상", "接続先"],
+  credentialFetchDestination: ["Fetch / pull", "페치 / 풀", "フェッチ / プル"],
+  credentialPushDestination: ["Push", "푸시", "プッシュ"],
+  credentialUsername: ["Username", "사용자 이름", "ユーザー名"],
+  credentialPassword: [
+    "Personal access token or password",
+    "개인 액세스 토큰 또는 비밀번호",
+    "個人アクセストークンまたはパスワード",
+  ],
+  saveCredentials: ["Save credentials", "인증 정보 저장", "認証情報を保存"],
+  forgetCredentials: ["Forget credentials", "인증 정보 삭제", "認証情報を削除"],
+  credentialsSaved: [
+    "Credentials sent to Git’s helper. Retry fetch, pull, or push to connect.",
+    "인증 정보를 Git 도우미에 전달했습니다. 페치, 풀 또는 푸시를 다시 시도하세요.",
+    "認証情報を Git ヘルパーに渡しました。フェッチ、プル、プッシュを再試行してください。",
+  ],
+  credentialsRemoved: [
+    "Credential removal requested from Git’s helper",
+    "Git 도우미에 인증 정보 삭제를 요청했습니다",
+    "Git ヘルパーに認証情報の削除を要求しました",
+  ],
+  credentialStorageHelp: [
+    "Your configured Git credential helper stores these credentials. Its settings determine storage and expiration. Diffinch does not save tokens in app settings or repository files.",
+    "설정된 Git 인증 도우미가 인증 정보를 저장하며, 도우미 설정에 따라 저장 방식과 만료 시간이 결정됩니다. Diffinch는 앱 설정이나 저장소 파일에 토큰을 저장하지 않습니다.",
+    "設定済みの Git 認証ヘルパーが認証情報を保存します。保存方法と有効期限はヘルパーの設定に従います。Diffinch はトークンをアプリ設定やリポジトリのファイルに保存しません。",
+  ],
+  credentialKeychainHelp: [
+    "Saving enables macOS Keychain for this URL in this repository. Your token is passed to Keychain through Git; Diffinch does not store it in app settings or repository files.",
+    "저장하면 이 저장소의 해당 URL에 macOS 키체인을 사용합니다. 토큰은 Git을 통해 키체인에 전달되며 앱 설정이나 저장소 파일에 저장하지 않습니다.",
+    "保存すると、このリポジトリのこの URL で macOS キーチェーンを使用します。トークンは Git 経由でキーチェーンに渡され、アプリ設定やリポジトリのファイルには保存されません。",
+  ],
+  credentialScopeHelp: [
+    "Git usually shares credentials across repositories on the same HTTPS host. Saving or forgetting credentials may affect those repositories; credential.useHttpPath controls path matching.",
+    "Git은 일반적으로 같은 HTTPS 호스트의 저장소 간에 인증 정보를 공유합니다. 저장하거나 삭제하면 해당 저장소에도 영향을 줄 수 있습니다. credential.useHttpPath로 경로 구분을 설정합니다.",
+    "Git は通常、同じ HTTPS ホストのリポジトリ間で認証情報を共有します。保存や削除は他のリポジトリにも影響する場合があります。パスの区別は credential.useHttpPath で設定します。",
+  ],
+  credentialTokenHelp: [
+    "For hosts that require a token, enter a personal access token with access to this repository. Saving does not verify access to the server.",
+    "토큰이 필요한 호스트에서는 이 저장소에 접근할 수 있는 개인 액세스 토큰을 입력하세요. 저장할 때 서버 접근 권한을 확인하지는 않습니다.",
+    "トークンが必要なホストでは、このリポジトリにアクセスできる個人アクセストークンを入力してください。保存時にサーバーへのアクセス権は確認しません。",
+  ],
+  credentialSshHelp: [
+    "This remote uses SSH. Git uses your SSH agent and ~/.ssh/config. Add the private key to your agent and register its public key with your Git host, then retry the remote operation.",
+    "이 원격은 SSH를 사용합니다. Git은 SSH 에이전트와 ~/.ssh/config를 사용합니다. 개인 키를 에이전트에 추가하고 공개 키를 Git 호스트에 등록한 뒤 원격 작업을 다시 시도하세요.",
+    "このリモートは SSH を使用しています。Git は SSH エージェントと ~/.ssh/config を使用します。秘密鍵をエージェントに追加し、公開鍵を Git ホストに登録してから再試行してください。",
+  ],
+  credentialHttpsOnly: [
+    "Token credentials require an HTTPS remote URL without embedded credentials, query parameters, or fragments. SSH remotes use your SSH agent; local paths need no credentials.",
+    "토큰 인증에는 인증 정보, 쿼리 매개변수, 프래그먼트가 없는 HTTPS 원격 URL이 필요합니다. SSH 원격은 SSH 에이전트를 사용하며 로컬 경로에는 인증 정보가 필요하지 않습니다.",
+    "トークン認証には、認証情報、クエリ、フラグメントを含まない HTTPS リモート URL が必要です。SSH は SSH エージェントを使用し、ローカルパスには認証情報が不要です。",
+  ],
+  credentialHelperMissing: [
+    "Choose an installed credential helper above and apply it. If none is listed, install a helper such as Git Credential Manager or libsecret, then reopen this dialog.",
+    "위에서 설치된 인증 도우미를 선택하고 적용하세요. 목록이 비어 있으면 Git Credential Manager 또는 libsecret 등의 도우미를 설치한 뒤 이 창을 다시 여세요.",
+    "上でインストール済みの認証ヘルパーを選択して適用してください。候補がない場合は Git Credential Manager や libsecret などをインストールし、この画面を開き直してください。",
+  ],
+  credentialForgetConfirm: [
+    "Forget saved credentials for {username} at this destination? Other repositories using the same credentials may require signing in again.",
+    "이 대상의 {username} 인증 정보를 삭제할까요? 같은 인증 정보를 사용하는 다른 저장소에서도 다시 로그인해야 할 수 있습니다.",
+    "この接続先の {username} の認証情報を削除しますか？同じ認証情報を使用する他のリポジトリでも再認証が必要になる場合があります。",
+  ],
+  credentialDestinationChanged: [
+    "The remote URL changed. Close and reopen Credentials before trying again.",
+    "원격 URL이 변경되었습니다. 인증 정보 창을 닫고 다시 연 뒤 시도하세요.",
+    "リモート URL が変更されました。認証情報の画面を開き直して再試行してください。",
+  ],
+  invalidCredentials: [
+    "Enter a username and token or password without line breaks or NUL characters.",
+    "줄바꿈이나 NUL 문자가 없는 사용자 이름과 토큰 또는 비밀번호를 입력하세요.",
+    "改行や NUL 文字を含まないユーザー名とトークンまたはパスワードを入力してください。",
+  ],
+  credentialsFailed: [
+    "Git could not complete the credential request. Check the remote URL and credential helper setup, and unlock your credential store if necessary.",
+    "Git이 인증 정보 요청을 완료하지 못했습니다. 원격 URL과 인증 도우미 설정을 확인하고 필요한 경우 인증 저장소의 잠금을 해제하세요.",
+    "Git は認証情報の処理を完了できませんでした。リモート URL と認証ヘルパー設定を確認し、必要に応じて認証情報ストアのロックを解除してください。",
+  ],
+} as const;

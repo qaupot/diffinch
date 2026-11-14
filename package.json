@@ -1,0 +1,62 @@
+{
+  "name": "diffinch",
+  "version": "0.1.0",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "check": "npm run version:check && npm run notices:check && tsc --noEmit",
+    "build": "npm run check && npm run notices:check -- --toolchain && vite build",
+    "notices:generate": "node scripts/notices.mjs",
+    "notices:check": "node scripts/notices.mjs --check",
+    "test:notices": "node --test scripts/notices.test.mjs",
+    "tauri": "tauri",
+    "preversion": "npm run version:check",
+    "version": "npm run version:sync",
+    "version:check": "node scripts/version.mjs --check",
+    "version:sync": "node scripts/version.mjs",
+    "version:patch": "npm version patch --no-git-tag-version",
+    "version:minor": "npm version minor --no-git-tag-version",
+    "version:major": "npm version major --no-git-tag-version",
+    "test:version": "node --test scripts/version.test.mjs",
+    "lint": "eslint . --max-warnings=0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "npm run test:unit && npm run test:version && npm run test:notices",
+    "test:unit": "vitest run",
+    "test:watch": "vitest",
+    "test:contracts": "node scripts/check-contracts.mjs",
+    "check:all": "npm run check && npm run lint && npm run format:check && npm test && npm run test:contracts && cargo fmt --manifest-path src-tauri/Cargo.toml -- --check && cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings && cargo test --locked --manifest-path src-tauri/Cargo.toml"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.12.4",
+    "@tauri-apps/plugin-store": "2.5.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@tauri-apps/cli": "2.12.4",
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/react": "16.3.3",
+    "@types/node": "24.19.2",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "eslint": "10.15.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.14.0",
+    "jsdom": "31.0.1",
+    "prettier": "3.10.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.72.2",
+    "vite": "8.3.8",
+    "vitest": "5.1.0"
+  },
+  "overrides": {
+    "minimatch": "11.0.8"
+  }
+}

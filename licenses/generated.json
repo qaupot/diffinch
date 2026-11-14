@@ -1,0 +1,7 @@
+{
+  "inputsHash": "6bfd7811c157e56e059e8e9456c816de224d364a3da2cd663985218b4562738a",
+  "noticesHash": "d5e0970878e11aa574e6e97946a33f5019f05bb271e7a2c90ed22dc299348d98",
+  "rustVersion": "1.99.1",
+  "npmPackages": 5,
+  "cargoPackages": 425
+}
