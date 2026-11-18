@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { git, type Action, type RemoteRefs, type Snapshot } from "../lib/git";
@@ -97,6 +98,17 @@ function branchGroup(scope: "Local" | "Remote", expanded: boolean) {
 function expand(name: string | RegExp) {
   fireEvent.click(screen.getByRole("button", { name, expanded: false }));
 }
+
+it("reserves the Add repository button's width when space for tabs runs out", async () => {
+  render(<style>{readFileSync("src/styles.css", "utf8")}</style>);
+  await setup();
+  const add = screen.getByRole("button", { name: "Add repository" });
+  const anchor = getComputedStyle(add.parentElement!);
+  expect(anchor.flexBasis).toBe("auto");
+  expect(anchor.flexShrink).toBe("0");
+  fireEvent.click(add);
+  expect(screen.getByRole("menuitem", { name: /Open Repository/ })).toBeTruthy();
+});
 
 it("opens the branch sections and folds each slash-delimited path independently", async () => {
   const repo = repository();
@@ -610,6 +622,47 @@ it.each(deletions)(
     expect(screen.queryByRole("button", { name: remove })).toBeNull();
   },
 );
+
+it("shows references in the Labels column and leaves it empty on rows without references", async () => {
+  const repo = repository();
+  const tip = repo.commits[0];
+  const parentId = "b".repeat(40);
+  tip.parents = [parentId];
+  repo.commits.push({
+    ...tip,
+    id: parentId,
+    shortId: parentId.slice(0, 7),
+    subject: "Earlier work",
+    parents: [],
+  });
+  repo.status.files.push(fileChange("staged-notes", "A", "."));
+  await setup(repo);
+  fireEvent.click(screen.getByRole("button", { name: "Commit graph" }));
+  const graph = within(screen.getByRole("region", { name: "Commit graph" }));
+  const header = graph.getByText("Labels").closest(".graph-columns")!;
+  expect(Array.from(header.children, (cell) => cell.textContent)).toEqual([
+    "Graph",
+    "Labels",
+    "Commit",
+    "Author",
+    "Date & time",
+  ]);
+  const row = graph.getByRole("button", { name: /^Saved work,/ });
+  expect(Array.from(row.children[1].children, (badge) => badge.textContent)).toEqual([
+    "HEAD",
+    "main",
+    "feature/sidebar",
+    "origin/main",
+    "v1.0",
+    "stash@{0}",
+  ]);
+  expect(row.children[2].textContent).toBe(tip.subject + tip.shortId);
+  for (const subject of ["Earlier work", "Current changes", "Staged changes"]) {
+    const entry = graph.getByRole("button", { name: new RegExp(`^${subject},`) });
+    expect(entry.children[1].textContent).toBe("");
+    expect(entry.children[2].textContent).toContain(subject);
+  }
+});
 
 it.each(deletions)(
   "offers %s deletion from the selected history commit",

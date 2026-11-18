@@ -10,14 +10,17 @@ import {
 import { useTranslation } from "./i18n";
 import { preferences } from "./lib/preferences";
 
-const columns = ["graphColumn", "commit", "author", "dateTime"] as const;
-const minimums = [48, 100, 60, 72];
+const columns = ["graphColumn", "labelsColumn", "commit", "author", "dateTime"] as const;
+const minimums = [48, 64, 100, 60, 72];
+const commitColumn = columns.indexOf("commit");
 
 function readWidths(key: string): number[] | null {
   try {
     const widths: unknown = JSON.parse(preferences.getItem(key) ?? "null");
+    if (!Array.isArray(widths)) return null;
+    // Older layouts stored Graph, Commit, Author and Date. Keep their width settings.
+    if (widths.length === 4) widths.splice(1, 0, 120);
     if (
-      Array.isArray(widths) &&
       widths.length === columns.length &&
       widths.every((width, index) => Number.isFinite(width) && width >= minimums[index])
     )
@@ -68,7 +71,7 @@ export default function HistoryTable({
     const viewport = header.current!.parentElement!.parentElement!;
     const total = next.reduce((sum, width) => sum + width, 0);
     if (total > viewport.clientWidth + 1) return next;
-    return [next[0], minimums[1], next[2], next[3]];
+    return next.map((width, index) => (index === commitColumn ? minimums[index] : width));
   }
   useLayoutEffect(() => {
     const update = () => {
@@ -127,20 +130,19 @@ export default function HistoryTable({
 
   const style: CSSProperties = widths
     ? {
-        gridTemplateColumns: `${widths[0]}px minmax(${widths[1]}px, 1fr) ${widths[2]}px ${widths[3]}px`,
+        gridTemplateColumns: widths
+          .map((width, index) =>
+            index === commitColumn ? `minmax(${width}px, 1fr)` : `${width}px`,
+          )
+          .join(" "),
         minWidth: widths.reduce((sum, width) => sum + width, 0),
       }
     : ({ "--graph-lanes": `${Math.max(graphWidth, minimums[0])}px` } as CSSProperties);
   return (
-    <div
-      id={id}
-      className="graph-table"
-      data-custom-columns={widths ? "" : undefined}
-      style={style}
-    >
+    <div id={id} className="graph-table" style={style}>
       <div ref={header} data-virtual-sticky className="graph-columns">
         {columns.map((column, index) => (
-          <div className="graph-column" key={column}>
+          <div className="graph-column" key={column} style={{ minWidth: minimums[index] }}>
             <span className="truncate">{t(column)}</span>
             {index < columns.length - 1 && (
               <div

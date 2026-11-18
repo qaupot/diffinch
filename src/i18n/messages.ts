@@ -845,6 +845,7 @@ export const messages = {
   ],
   commitGraphSize: ["Commit graph size", "커밋 그래프 크기", "コミットグラフのサイズ"],
   graphColumn: ["Graph", "그래프", "グラフ"],
+  labelsColumn: ["Labels", "레이블", "ラベル"],
   resizeColumnPair: [
     "Resize {left} and {right} columns",
     "{left} 열과 {right} 열의 너비 조절",

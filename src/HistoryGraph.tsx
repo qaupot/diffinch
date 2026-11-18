@@ -656,6 +656,7 @@ export default function HistoryGraph({
             const commit = entry.kind === "commit" ? entry : null;
             const active = selectedId === entry.id;
             const refList = refs.get(entry.id) ?? [];
+            const refNames = refList.map(({ name }) => name).join(", ");
             const subject =
               entry.kind === "changes"
                 ? t(entry.id === "staged" ? "stagedChanges" : "currentChanges")
@@ -675,7 +676,7 @@ export default function HistoryGraph({
                 aria-pressed={active}
                 aria-label={
                   commit
-                    ? `${subject}, ${commit.shortId}, ${commitAuthor(commit)}, ${date}${refList.length ? `, ${refList.map(({ name }) => name).join(", ")}` : ""}`
+                    ? `${subject}, ${commit.shortId}, ${commitAuthor(commit)}, ${date}${refNames ? `, ${refNames}` : ""}`
                     : `${subject}, ${count}`
                 }
                 onClick={() => selectEntry(entry)}
@@ -712,43 +713,43 @@ export default function HistoryGraph({
                   height={rows.rowHeight}
                   uncommitted={!commit}
                 />
+                <span className="graph-labels" title={refNames || undefined}>
+                  {refList.map((ref) => {
+                    const Icon =
+                      ref.kind === "tag"
+                        ? TagIcon
+                        : ref.kind === "stash"
+                          ? Archive
+                          : ref.kind === "head"
+                            ? Crosshair
+                            : ref.branch.remote
+                              ? Cloud
+                              : GitBranch;
+                    return (
+                      <span
+                        key={
+                          ref.kind === "branch"
+                            ? branchOption(ref.branch).key
+                            : `${ref.kind}/${ref.name}`
+                        }
+                        className={`graph-ref graph-ref-${ref.kind}${ref.kind === "branch" && ref.branch.remote ? " graph-ref-remote" : ""}`}
+                        title={ref.kind === "stash" ? `${ref.name}: ${ref.subject}` : ref.name}
+                      >
+                        <Icon size={10} />
+                        <span className="truncate">{ref.name}</span>
+                      </span>
+                    );
+                  })}
+                </span>
                 <span className="graph-summary">
                   <span className="graph-subject truncate" title={subject}>
                     {subject}
                   </span>
-                  <span className="graph-meta">
-                    {commit ? (
-                      <code>{commit.shortId}</code>
-                    ) : (
-                      <span className="graph-change-count">{count}</span>
-                    )}
-                    {refList.map((ref) => {
-                      const Icon =
-                        ref.kind === "tag"
-                          ? TagIcon
-                          : ref.kind === "stash"
-                            ? Archive
-                            : ref.kind === "head"
-                              ? Crosshair
-                              : ref.branch.remote
-                                ? Cloud
-                                : GitBranch;
-                      return (
-                        <span
-                          key={
-                            ref.kind === "branch"
-                              ? branchOption(ref.branch).key
-                              : `${ref.kind}/${ref.name}`
-                          }
-                          className={`graph-ref graph-ref-${ref.kind}${ref.kind === "branch" && ref.branch.remote ? " graph-ref-remote" : ""}`}
-                          title={ref.kind === "stash" ? `${ref.name}: ${ref.subject}` : ref.name}
-                        >
-                          <Icon size={10} />
-                          <span className="truncate">{ref.name}</span>
-                        </span>
-                      );
-                    })}
-                  </span>
+                  {commit ? (
+                    <code>{commit.shortId}</code>
+                  ) : (
+                    <span className="graph-change-count">{count}</span>
+                  )}
                 </span>
                 <span
                   className="graph-author truncate"

@@ -23,8 +23,8 @@ function openTable(path = "/repo") {
   const handles = screen.getAllByRole("separator");
   const table = document.getElementById("history-table")!;
   const header = table.firstElementChild!;
-  const initial = [80, 300, 100, 140];
-  Object.defineProperty(table.parentElement!, "clientWidth", { value: 620 });
+  const initial = [80, 120, 300, 100, 140];
+  Object.defineProperty(table.parentElement!, "clientWidth", { value: 740 });
   Array.from(header.children).forEach((cell, index) => {
     vi.spyOn(cell, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, initial[index], 28));
   });
@@ -32,9 +32,10 @@ function openTable(path = "/repo") {
 }
 
 it.each([
-  [0, "90px minmax(100px, 1fr) 100px 140px"],
-  [1, "80px minmax(100px, 1fr) 90px 140px"],
-  [2, "80px minmax(100px, 1fr) 110px 130px"],
+  [0, "90px 110px minmax(100px, 1fr) 100px 140px"],
+  [1, "80px 130px minmax(100px, 1fr) 100px 140px"],
+  [2, "80px 120px minmax(100px, 1fr) 90px 140px"],
+  [3, "80px 120px minmax(100px, 1fr) 110px 130px"],
 ] as const)(
   "resizes neighboring columns at boundary %i and remembers the layout",
   (index, layout) => {
@@ -50,9 +51,15 @@ it.each([
   },
 );
 
+it("adds space for labels to a saved four-column layout", () => {
+  localStorage.setItem("diffinch.graphColumns:/repo", "[90,240,86,112]");
+  const { table } = openTable();
+  expect(table.style.gridTemplateColumns).toBe("90px 120px minmax(240px, 1fr) 86px 112px");
+});
+
 it("previews a bounded drag, cancels with Escape and saves only on release", () => {
   const { handles, table } = openTable();
-  const handle = handles[2];
+  const handle = handles[1];
   handle.setPointerCapture = vi.fn();
   handle.hasPointerCapture = () => true;
   handle.releasePointerCapture = vi.fn();
@@ -61,12 +68,12 @@ it("previews a bounded drag, cancels with Escape and saves only on release", () 
     fireEvent.pointerMove(handle, { pointerId: 1, clientX: 500 });
   };
   drag();
-  expect(table.style.gridTemplateColumns).toBe("80px minmax(100px, 1fr) 168px 72px");
+  expect(table.style.gridTemplateColumns).toBe("80px 320px minmax(100px, 1fr) 100px 140px");
   expect(localStorage.getItem("diffinch.graphColumns:/repo")).toBeNull();
   fireEvent.keyDown(handle, { key: "Escape" });
   expect(table.style.gridTemplateColumns).toBe("");
   drag();
   fireEvent.pointerUp(handle, { pointerId: 1, clientX: 500 });
-  expect(table.style.gridTemplateColumns).toBe("80px minmax(100px, 1fr) 168px 72px");
-  expect(localStorage.getItem("diffinch.graphColumns:/repo")).toBe("[80,100,168,72]");
+  expect(table.style.gridTemplateColumns).toBe("80px 320px minmax(100px, 1fr) 100px 140px");
+  expect(localStorage.getItem("diffinch.graphColumns:/repo")).toBe("[80,320,100,100,140]");
 });
