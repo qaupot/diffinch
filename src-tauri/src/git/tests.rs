@@ -1,18 +1,15 @@
 use super::{model::*, process::*, rebase::REBASE_MESSAGES, *};
-use std::{io, process::Command};
 #[cfg(unix)]
-use std::{
-    sync::atomic::{AtomicBool, Ordering},
-    time::Duration,
-};
+use std::time::Duration;
+use std::{io, process::Command};
 
 #[cfg(unix)]
 #[test]
 fn cancels_a_git_transfer_and_its_child() {
-    let cancelled = AtomicBool::new(false);
+    let cancelled = Cancellation::default();
     let progress = |percent| {
         assert_eq!(percent, 42);
-        cancelled.store(true, Ordering::Relaxed);
+        cancelled.cancel();
     };
     let mut command = Command::new("sh");
     command.args([
@@ -115,14 +112,14 @@ fn cancels_a_commit_hook_and_preserves_the_index() {
     fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
     repo.run(["config", "core.hooksPath", hooks.to_str().unwrap()])
         .unwrap();
-    let cancelled = Arc::new(AtomicBool::new(false));
+    let cancelled = Arc::new(Cancellation::default());
     let signal = cancelled.clone();
     let started = std::time::Instant::now();
     let result = with_operation(
         cancelled,
         move |percent| {
             if percent == 42 {
-                signal.store(true, Ordering::Relaxed);
+                signal.cancel();
             }
         },
         || {
@@ -146,23 +143,40 @@ fn cancels_a_commit_hook_and_preserves_the_index() {
 #[test]
 fn cancellation_remains_available_when_a_child_keeps_a_pipe_open() {
     use std::sync::Arc;
-    let cancelled = Arc::new(AtomicBool::new(false));
+    let cancelled = Arc::new(Cancellation::default());
     let signal = cancelled.clone();
-    let cancel = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(300));
-        signal.store(true, Ordering::Relaxed);
-    });
+    let dir = tempfile::tempdir().unwrap();
+    let leader = dir.path().join("leader");
     let started = std::time::Instant::now();
+    let cancel = std::thread::spawn(move || {
+        let mut reserved = false;
+        while started.elapsed() < Duration::from_secs(4) {
+            if let Ok(pid) = std::fs::read_to_string(&leader) {
+                if let Ok(pid) = pid.trim().parse::<u32>() {
+                    reserved = process::wait_without_reaping(pid).is_ok();
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        signal.cancel();
+        reserved
+    });
     let result = with_operation(
         cancelled,
         |_| {},
         || {
             let mut command = Command::new("sh");
-            command.args(["-c", "sleep 30 & exit 0"]);
+            command
+                .current_dir(dir.path())
+                .args(["-c", "sleep 30 & echo $$ > leader; exit 0"]);
             execute(command, &[], None)
         },
     );
-    cancel.join().unwrap();
+    assert!(
+        cancel.join().unwrap(),
+        "the group leader must stay waitable until the pipes close"
+    );
     assert!(result.is_err_and(|error| error.key == "operationInterrupted"));
     assert!(started.elapsed() < Duration::from_secs(5));
 }
@@ -1160,6 +1174,124 @@ fn loads_older_graph_parents_and_creates_refs_at_an_older_commit() {
         .action(Action::CreateTag {
             name: "invalid".into(),
             start: Some("HEAD".into())
+        })
+        .is_err());
+}
+
+#[test]
+fn refreshes_multiple_history_pages_with_large_commit_titles() {
+    let (_dir, repo) = repo();
+    let branch = repo.text(["symbolic-ref", "HEAD"]).unwrap();
+    let title = "x".repeat(11 * 1024);
+    let commit = format!(
+        "commit {branch}\ncommitter Tester <t@example.test> 1000000000 +0000\ndata {}\n{title}\n\n",
+        title.len()
+    );
+    let mut import = repo.command();
+    import.args(["fast-import", "--quiet"]);
+    execute(import, &[], Some(commit.repeat(200).as_bytes())).unwrap();
+    let first = repo.snapshot().unwrap();
+    let next = repo
+        .history_page(HistoryPageRequest {
+            roots: first.history_cursor.unwrap().roots,
+            offset: first.commits.len(),
+            limit: HISTORY_PAGE_SIZE,
+        })
+        .unwrap();
+    let refreshed = repo.snapshot_with_history(Some(200)).unwrap();
+    assert!(!refreshed.has_older_commits);
+    assert_eq!(refreshed.commits.len(), 200);
+    assert!(refreshed.commits.iter().map(|c| &c.id).eq(first
+        .commits
+        .iter()
+        .chain(&next.commits)
+        .map(|c| &c.id)));
+}
+
+#[test]
+fn detects_a_shifted_page_boundary_after_deepening_a_clone() {
+    let (source, repo) = repo();
+    for branch in ["main", "topic"] {
+        if branch == "topic" {
+            repo.run(["switch", "--orphan", branch]).unwrap();
+        }
+        for i in 0..4 {
+            repo.run(["commit", "--allow-empty", "-m", &format!("{branch}-{i}")])
+                .unwrap();
+        }
+    }
+    let clone_dir = tempfile::tempdir().unwrap();
+    repo.run([
+        "clone",
+        "--no-local",
+        "--no-single-branch",
+        "--depth=2",
+        "--",
+        source.path().to_str().unwrap(),
+        clone_dir.path().to_str().unwrap(),
+    ])
+    .unwrap();
+    let clone = Repo::discover(clone_dir.path()).unwrap();
+    let shallow = clone.snapshot_with_history(Some(3)).unwrap();
+    let cursor = shallow.history_cursor.unwrap();
+    clone.run(["fetch", "--unshallow"]).unwrap();
+    let page = clone
+        .history_page(HistoryPageRequest {
+            roots: cursor.roots,
+            offset: 3,
+            limit: 2,
+        })
+        .unwrap();
+    assert_ne!(page.commits[0].id, cursor.next);
+    let refreshed = clone.snapshot_with_history(Some(5)).unwrap();
+    assert_eq!(refreshed.commits.len(), 5);
+    assert_eq!(refreshed.commits[3].id, page.commits[0].id);
+    assert_ne!(shallow.commits[2].id, refreshed.commits[2].id);
+}
+
+#[test]
+fn appends_pages_from_pinned_roots_after_branches_move() {
+    let (_dir, repo) = repo();
+    let base = commit_file(&repo, "file", "one", "Base");
+    repo.run(["switch", "-c", "topic"]).unwrap();
+    let topic = commit_file(&repo, "topic", "topic", "Topic");
+    repo.run(["switch", "main"]).unwrap();
+    commit_file(&repo, "file", "two", "Main");
+    repo.run(["merge", "--no-ff", "topic", "-m", "Merge"])
+        .unwrap();
+    let expected = repo.snapshot().unwrap().commits;
+    let first = repo.snapshot_with_history(Some(1)).unwrap();
+    repo.run(["update-ref", "refs/heads/main", &base]).unwrap();
+    repo.run(["branch", "-D", "topic"]).unwrap();
+    let mut loaded = first.commits;
+    let cursor = first.history_cursor.unwrap();
+    let mut expected_next = Some(cursor.next);
+    loop {
+        let page = repo
+            .history_page(HistoryPageRequest {
+                roots: cursor.roots.clone(),
+                offset: loaded.len(),
+                limit: 1,
+            })
+            .unwrap();
+        assert_eq!(page.commits.len(), 1);
+        assert_eq!(expected_next.as_ref(), Some(&page.commits[0].id));
+        expected_next = page.next_commit;
+        loaded.extend(page.commits);
+        if expected_next.is_none() {
+            break;
+        }
+    }
+    assert!(loaded.iter().any(|commit| commit.id == topic));
+    assert!(loaded
+        .iter()
+        .map(|c| &c.id)
+        .eq(expected.iter().map(|c| &c.id)));
+    assert!(repo
+        .history_page(HistoryPageRequest {
+            roots: vec!["--all".into()],
+            offset: 1,
+            limit: 1
         })
         .is_err());
 }

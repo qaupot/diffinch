@@ -1,19 +1,11 @@
 use super::{
     credentials::credential_url,
-    process::{execute_command, Transfer},
+    process::{execute_command, Cancellation, Transfer},
     remotes::push_destination,
     GitError, Repo, Result,
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    process::Command,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc,
-    },
-    thread,
-    time::Duration,
-};
+use std::{process::Command, sync::mpsc, thread, time::Duration};
 
 const ACCOUNT_OUTPUT_LIMIT: usize = 128 * 1024;
 const ACCOUNT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -79,7 +71,7 @@ impl Repo {
 }
 
 fn lookup_account(git: Command, input: &[u8], timeout: Duration) -> Result<CredentialAccount> {
-    let cancelled = AtomicBool::new(false);
+    let cancelled = Cancellation::default();
     let (done, receiver) = mpsc::channel();
     let output = thread::scope(|scope| {
         let cancelled = &cancelled;
@@ -88,7 +80,7 @@ fn lookup_account(git: Command, input: &[u8], timeout: Duration) -> Result<Crede
                 receiver.recv_timeout(timeout),
                 Err(mpsc::RecvTimeoutError::Timeout)
             ) {
-                cancelled.store(true, Ordering::Relaxed);
+                cancelled.cancel();
             }
         });
         let transfer = Transfer {

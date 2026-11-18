@@ -118,6 +118,7 @@ pub struct Settings {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
+    pub(super) history_cursor: Option<HistoryCursor>,
     pub(super) path: String,
     pub(super) name: String,
     pub(super) status: Status,
@@ -131,6 +132,27 @@ pub struct Snapshot {
     pub(super) operation: Option<String>,
     pub(super) push_lease: Option<PushLease>,
     pub(super) settings: Settings,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryPageRequest {
+    pub(super) roots: Vec<String>,
+    pub(super) offset: usize,
+    pub(super) limit: usize,
+}
+
+#[derive(Serialize)]
+pub(super) struct HistoryCursor {
+    pub(super) roots: Vec<String>,
+    pub(super) next: String,
+}
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryPage {
+    pub(super) commits: Vec<Commit>,
+    pub(super) next_commit: Option<String>,
 }
 
 #[derive(Serialize)]

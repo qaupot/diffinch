@@ -1,4 +1,5 @@
 import { type MouseEvent } from "react";
+import ContextMenuRow from "./ContextMenuRow";
 import { useTranslation } from "./i18n";
 import { type MessageKey } from "./i18n/messages";
 import { FileCode2, FileText, FolderGit2, Minus, Plus } from "./icons";
@@ -23,6 +24,7 @@ export default function FileRow({
   busy,
   onSelect,
   onStage,
+  onDiscard,
 }: {
   file: FileChange;
   inIndex: boolean;
@@ -31,6 +33,7 @@ export default function FileRow({
   busy: boolean;
   onSelect: (event: MouseEvent<HTMLButtonElement>) => void;
   onStage: () => void;
+  onDiscard?: () => void;
 }) {
   const { t } = useTranslation();
   const code = file.conflict ? "U" : inIndex ? file.index : file.worktree;
@@ -45,7 +48,12 @@ export default function FileRow({
       ? FileCode2
       : FileText;
   return (
-    <div className={`file-row${selected ? " selected" : ""}${preview ? " preview" : ""}`}>
+    <ContextMenuRow
+      className={`file-row${selected ? " selected" : ""}${preview ? " preview" : ""}`}
+      disabled={busy}
+      actionLabel={t("discardFileChanges", { path: file.path })}
+      onAction={onDiscard}
+    >
       <button
         className="file-select"
         onClick={onSelect}
@@ -78,6 +86,6 @@ export default function FileRow({
       >
         {inIndex ? <Minus size={14} /> : <Plus size={14} />}
       </button>
-    </div>
+    </ContextMenuRow>
   );
 }

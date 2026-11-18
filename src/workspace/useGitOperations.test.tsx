@@ -16,6 +16,10 @@ vi.mock("../lib/git", async (original) => ({
   git: {
     action: vi.fn(),
     snapshot: vi.fn(),
+    workingState: vi.fn(),
+    historyPage: vi.fn(),
+    watch: vi.fn().mockResolvedValue(undefined),
+    unwatch: vi.fn().mockResolvedValue(undefined),
     fetch: vi.fn(),
     discardPlan: vi.fn(),
     cancelTransfer: vi.fn().mockResolvedValue(undefined),
@@ -30,34 +34,36 @@ beforeEach(() => {
 });
 
 function setup(initial: Snapshot = snapshot()) {
-  const tab = { snapshot: initial };
-  return renderHook(() => {
-    const [notice, setNotice] = useState<WorkspaceNotice | null>(null);
-    const activity = useGitActivity(false, setNotice);
-    const dialogs = useWorkspaceDialogs(() => {});
-    const draft = useCommitDraft(false);
-    const repository = useRepositoryState({
-      tab,
-      active: false,
-      restoring: false,
-      pauseRefresh: false,
-      activity,
-      setNotice,
-    });
-    const operations = useGitOperations({
-      repository,
-      activity,
-      dialogs,
-      draft,
-      restoring: false,
-      acceptRepo: vi.fn(),
-      forgetWorktree: vi.fn(),
-      closeMenu: vi.fn(),
-      onConflict: vi.fn(),
-      setNotice,
-    });
-    return { draft, activity, operations, notice, dialogs, repository };
-  });
+  return renderHook(
+    ({ tab, active }) => {
+      const [notice, setNotice] = useState<WorkspaceNotice | null>(null);
+      const activity = useGitActivity(false, setNotice);
+      const dialogs = useWorkspaceDialogs(() => {});
+      const draft = useCommitDraft(false);
+      const repository = useRepositoryState({
+        tab,
+        active,
+        restoring: false,
+        pauseRefresh: false,
+        activity,
+        setNotice,
+      });
+      const operations = useGitOperations({
+        repository,
+        activity,
+        dialogs,
+        draft,
+        restoring: false,
+        acceptRepo: vi.fn(),
+        forgetWorktree: vi.fn(),
+        closeMenu: vi.fn(),
+        onConflict: vi.fn(),
+        setNotice,
+      });
+      return { draft, activity, operations, notice, dialogs, repository };
+    },
+    { initialProps: { tab: { snapshot: initial }, active: false } },
+  );
 }
 
 const commit: Action = {
@@ -67,6 +73,168 @@ const commit: Action = {
   sign: false,
   amend: null,
 };
+
+it.each<Action>([
+  { kind: "stage", id: "x" },
+  { kind: "unstage", id: "x" },
+  { kind: "stageFiles", ids: ["x"] },
+  { kind: "unstageFiles", ids: ["x"] },
+  { kind: "stageAll" },
+  { kind: "unstageAll" },
+  { kind: "hunk", id: "x", staged: false, index: 0, token: "token", page: 0 },
+])("refreshes the index after $kind while reusing loaded history", async (action) => {
+  const initial = snapshot();
+  const update = {
+    status: { ...initial.status, files: [fileChange("notes", "M", ".")] },
+    operation: null,
+    pushLease: null,
+  };
+  vi.mocked(git.snapshot).mockClear();
+  vi.mocked(git.workingState).mockResolvedValue(update);
+  vi.mocked(git.action).mockResolvedValue("fileStaged");
+  const { result } = setup(initial);
+  await act(() => result.current.operations.action(action));
+  expect(git.snapshot).not.toHaveBeenCalled();
+  expect(result.current.repository.repo.status).toEqual(update.status);
+  expect(result.current.repository.repo.commits).toBe(initial.commits);
+});
+
+it("reloads history after staging if HEAD moved externally", async () => {
+  const initial = snapshot(),
+    moved = snapshot();
+  moved.status.head = "b".repeat(40);
+  vi.mocked(git.workingState).mockResolvedValue(moved);
+  vi.mocked(git.snapshot).mockClear().mockResolvedValue(moved);
+  vi.mocked(git.action).mockResolvedValue("fileStaged");
+  const { result } = setup(initial);
+  await act(() => result.current.operations.action({ kind: "stageAll" }));
+  expect(git.snapshot).toHaveBeenCalledOnce();
+  expect(result.current.repository.repo).toBe(moved);
+});
+
+it("appends an older page without refreshing metadata or replacing loaded commits", async () => {
+  const initial = snapshot();
+  const head = {
+    id: initial.status.head!,
+    shortId: "aaaa",
+    parents: [],
+    author: "A",
+    email: "a@b",
+    subject: "New",
+    date: "",
+  };
+  const older = { ...head, id: "b".repeat(40), subject: "Old" };
+  initial.commits = [head];
+  initial.historyCursor = { roots: [head.id], next: older.id };
+  initial.hasOlderCommits = true;
+  vi.mocked(git.snapshot).mockClear();
+  vi.mocked(git.historyPage).mockResolvedValue({ commits: [older], nextCommit: null });
+  const { result } = setup(initial);
+  await act(async () => {
+    await result.current.repository.extendHistory(161);
+  });
+  expect(git.historyPage).toHaveBeenCalledWith(initial.path, {
+    roots: [head.id],
+    offset: 1,
+    limit: 160,
+  });
+  expect(git.snapshot).not.toHaveBeenCalled();
+  expect(result.current.repository.repo.commits).toEqual([head, older]);
+  expect(result.current.repository.repo.commits[0]).toBe(head);
+  expect(result.current.repository.repo.branches).toBe(initial.branches);
+  expect(result.current.repository.repo.hasOlderCommits).toBe(false);
+});
+
+it("reloads the requested depth when the next history page starts at a different commit", async () => {
+  const initial = snapshot();
+  initial.hasOlderCommits = true;
+  initial.historyCursor = { roots: [initial.status.head!], next: "expected" };
+  const shifted = {
+    id: "different",
+    shortId: "diff",
+    parents: [],
+    subject: "Older history",
+    author: "A",
+    email: "",
+    date: "",
+  };
+  vi.mocked(git.historyPage)
+    .mockReset()
+    .mockResolvedValue({ commits: [shifted], nextCommit: null });
+  const fresh = { ...snapshot(), commits: [shifted] };
+  vi.mocked(git.snapshot).mockClear().mockResolvedValue(fresh);
+  const { result } = setup(initial);
+  await act(async () => {
+    expect(await result.current.repository.extendHistory(320)).toBe(fresh);
+  });
+  expect(git.snapshot).toHaveBeenCalledExactlyOnceWith(initial.path, 320, []);
+  expect(result.current.repository.repo).toBe(fresh);
+});
+
+it("refreshes the reopened tab when an earlier working-state read finishes after staging", async () => {
+  const initial = snapshot();
+  const reopened = {
+    ...initial,
+    name: "reopened",
+    tags: [{ name: "new-tag", tip: initial.status.head! }],
+  };
+  const oldRead = deferred<Snapshot>();
+  vi.mocked(git.workingState)
+    .mockReset()
+    .mockReturnValueOnce(oldRead.promise)
+    .mockResolvedValueOnce({
+      ...reopened,
+      status: { ...reopened.status, files: [fileChange("staged", "M", ".")] },
+    });
+  vi.mocked(git.action).mockResolvedValue("fileStaged");
+  const { result, rerender } = setup(initial);
+  let staging!: Promise<void>;
+  await act(async () => {
+    staging = result.current.operations.action({ kind: "stageAll" });
+  });
+  expect(git.workingState).toHaveBeenCalledOnce();
+  rerender({ tab: { snapshot: reopened }, active: false });
+  await act(async () => {
+    oldRead.resolve(initial);
+    await staging;
+  });
+  expect(result.current.repository.repo.tags).toBe(reopened.tags);
+  expect(result.current.repository.repo.status.files[0].id).toBe("staged");
+  expect(git.workingState).toHaveBeenCalledTimes(2);
+  expect(git.action).toHaveBeenCalledOnce();
+});
+
+it.each(["leave", "return", "switch tabs", "close", "reopen"])(
+  "stops a commit jump after %s while its page is loading",
+  async (change) => {
+    const initial = {
+      ...snapshot(),
+      hasOlderCommits: true,
+      historyCursor: { roots: ["head"], next: "older" },
+    };
+    const page = deferred<Awaited<ReturnType<typeof git.historyPage>>>();
+    vi.mocked(git.historyPage).mockReset().mockReturnValueOnce(page.promise);
+    const { result, rerender, unmount } = setup(initial);
+    const tab = { snapshot: initial };
+    if (change === "switch tabs") rerender({ tab, active: true });
+    let jump!: Promise<Snapshot | null>;
+    act(() => {
+      result.current.repository.setView("history");
+      jump = result.current.repository.extendHistory(2000, initial, "target");
+    });
+    if (change === "leave" || change === "return")
+      act(() => result.current.repository.setView("changes"));
+    if (change === "return") act(() => result.current.repository.setView("history"));
+    if (change === "switch tabs") rerender({ tab, active: false });
+    if (change === "close") unmount();
+    if (change === "reopen") rerender({ tab: { snapshot: snapshot() }, active: false });
+    await act(async () => {
+      page.resolve({ commits: [], nextCommit: null });
+      expect(await jump).toBeNull();
+    });
+    expect(git.historyPage).toHaveBeenCalledOnce();
+  },
+);
 
 it("captures the discard token before confirmation and keeps it after a refresh", async () => {
   const initial = snapshot();
@@ -198,7 +366,6 @@ it("follows rewritten history instead of selecting an old commit retained by ano
   vi.mocked(git.snapshot).mockResolvedValue(updated);
   const { result } = setup(initial);
   act(() => {
-    result.current.repository.viewRef.current = "history";
     result.current.repository.setView("history");
     result.current.repository.setSelection({ kind: "commit", id: old.id });
     result.current.dialogs.showModal("changeAuthor");

@@ -11,7 +11,11 @@ fn export_contract_fixtures() {
     let requests: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("../../../tests/contracts/actions.json")).unwrap();
     for request in &requests {
-        if request["command"] == "inspect_file" {
+        if request["command"] == "history_page" {
+            serde_json::from_value::<HistoryPageRequest>(request["request"].clone()).unwrap();
+        } else if request["command"] == "search_commits" {
+            serde_json::from_value::<CommitSearchRequest>(request["request"].clone()).unwrap();
+        } else if request["command"] == "inspect_file" {
             serde_json::from_value::<FileInspectionRequest>(request["request"].clone()).unwrap();
         } else if request["command"] == "git_action" {
             serde_json::from_value::<GitActionRequest>(request["request"].clone()).unwrap();
@@ -57,7 +61,7 @@ fn export_contract_fixtures() {
         "<svg xmlns=\"http://www.w3.org/2000/svg\"/>",
     )
     .unwrap();
-    let mut snapshot = repo.snapshot().unwrap();
+    let mut snapshot = repo.snapshot_with_history(Some(1)).unwrap();
     for commit in &snapshot.commits {
         assert_eq!(commit.email, author_settings["settings"]["email"]);
     }
@@ -86,6 +90,7 @@ fn export_contract_fixtures() {
             repo.inspect_file(FileInspectionRequest::Diff { revision: target.clone(), file: "notes.txt".into(), previous_path: None, options: DiffOptions::default() }).unwrap(),
         ],
         "Snapshot": snapshot,
+        "HistoryPage": repo.history_page(HistoryPageRequest { roots: snapshot.history_cursor.as_ref().unwrap().roots.clone(), offset: 1, limit: 1 }).unwrap(),
         "WorkingState": repo.working_state().unwrap(),
         "Diff": repo.working_diff(false, DiffOptions::default()).unwrap(),
         "DiscardPlan": repo.discard_plan(&snapshot.status.files.iter().find(|file| file.path == "notes.txt").unwrap().id).unwrap(),

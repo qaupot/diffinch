@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { errorMessage } from "../i18n";
 import { branchRef, readHiddenBranches, saveHiddenBranches, visibleHistory } from "../lib/branches";
 import { git, historyPageSize, type Branch, type RefreshScope } from "../lib/git";
@@ -26,14 +34,24 @@ export function useRepositoryState({
   const [repo, setRepo] = useState(tab.snapshot);
   const [hiddenBranches, setHiddenBranches] = useState(() => readHiddenBranches(tab.snapshot.path));
   const graphRepo = useMemo(() => visibleHistory(repo, hiddenBranches), [repo, hiddenBranches]);
-  const [view, setView] = useState<View>("changes");
+  const [view, displayView] = useState<View>("changes");
   const viewRef = useRef<View>("changes");
+  const navigation = useRef(0);
+  function setView(next: View) {
+    navigation.current++;
+    viewRef.current = next;
+    displayView(next);
+  }
+  useLayoutEffect(() => {
+    if (!active) navigation.current++;
+  }, [active]);
   const [workspaceSelection, setSelection] = useState<WorkspaceSelection | null>(() =>
     chooseSelection(tab.snapshot, "changes", null),
   );
   const [diffRevision, setDiffRevision] = useState(0);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const historyDepth = useRef(historyPageSize);
+  const openedTab = useRef<RepositoryTab | null>(tab);
   const updateOpenedRepo = useEffectEvent(({ snapshot, message }: RepositoryTab) => {
     if (repo !== snapshot) {
       historyDepth.current = historyPageSize;
@@ -45,8 +63,12 @@ export function useRepositoryState({
     }
     if (message) setNotice({ message: { key: message }, error: false });
   });
-  useEffect(() => {
+  useLayoutEffect(() => {
+    openedTab.current = tab;
     updateOpenedRepo(tab);
+    return () => {
+      openedTab.current = null;
+    };
   }, [tab]);
 
   useEffect(() => {
@@ -54,28 +76,48 @@ export function useRepositoryState({
       setSelection((current) => chooseSelection(graphRepo, "history", current));
   }, [graphRepo, view]);
 
+  const loadSnapshot = useCallback(
+    async (scope: RefreshScope = "full") => {
+      // A tab can be reopened from another workspace while Git is running.
+      // Apply the refresh against the latest open, including after a mutation.
+      while (openedTab.current) {
+        const opened = openedTab.current;
+        const base = tab === opened ? repo : opened.snapshot;
+        try {
+          if (scope === "working") {
+            const update = await git.workingState(base.path);
+            if (opened !== openedTab.current) continue;
+            if (
+              update.status.head === base.status.head &&
+              update.status.branch === base.status.branch
+            ) {
+              return JSON.stringify(update.status) === JSON.stringify(base.status) &&
+                update.operation === base.operation &&
+                JSON.stringify(update.pushLease) === JSON.stringify(base.pushLease)
+                ? base
+                : { ...base, ...update };
+            }
+          }
+          const snapshot = await git.snapshot(base.path, historyDepth.current, hiddenBranches);
+          if (opened === openedTab.current) return snapshot;
+        } catch (error) {
+          if (opened === openedTab.current) throw error;
+        }
+      }
+      return null;
+    },
+    [tab, repo, hiddenBranches],
+  );
+
   const refresh = useCallback(
     async (quiet = false, scope: RefreshScope = "full") => {
       if (!repo.path || inFlight.current) return;
       inFlight.current = true;
       if (!quiet) setBusy(true);
       try {
-        const update = scope === "working" ? await git.workingState(repo.path) : null;
-        const canReuse =
-          update &&
-          update.status.head === repo.status.head &&
-          update.status.branch === repo.status.branch;
-        const snapshot = canReuse
-          ? { ...repo, ...update }
-          : await git.snapshot(repo.path, historyDepth.current, hiddenBranches);
-        setRepo(
-          canReuse &&
-            JSON.stringify(snapshot.status) === JSON.stringify(repo.status) &&
-            snapshot.operation === repo.operation &&
-            JSON.stringify(snapshot.pushLease) === JSON.stringify(repo.pushLease)
-            ? repo
-            : snapshot,
-        );
+        const snapshot = await loadSnapshot(scope);
+        if (!snapshot) return;
+        setRepo(snapshot);
         setSelection((current) =>
           chooseSelection(
             viewRef.current === "history" ? visibleHistory(snapshot, hiddenBranches) : snapshot,
@@ -91,7 +133,7 @@ export function useRepositoryState({
         inFlight.current = false;
       }
     },
-    [repo, hiddenBranches, inFlight, setBusy, setNotice],
+    [repo.path, loadSnapshot, hiddenBranches, inFlight, setBusy, setNotice],
   );
 
   useRepositoryWatch(active, repo.path, (scope) => {
@@ -99,21 +141,45 @@ export function useRepositoryState({
     void refresh(true, scope);
     return true;
   });
-  async function extendHistory(depth: number, hidden = hiddenBranches) {
+  async function extendHistory(depth: number, base = repo, target?: string) {
     if (!repo.path || inFlight.current) return null;
     inFlight.current = true;
     setBusy(true);
     setLoadingHistory(true);
+    const visit = navigation.current;
+    const current = () => openedTab.current === tab && (!target || visit === navigation.current);
     try {
-      const snapshot = await git.snapshot(repo.path, depth, hidden);
-      historyDepth.current = depth;
-      setRepo(snapshot);
-      setSelection((current) =>
-        chooseSelection(visibleHistory(snapshot, hidden), viewRef.current, current),
-      );
+      let snapshot = base;
+      while (snapshot.historyCursor && snapshot.commits.length < depth) {
+        const offset = snapshot.commits.length;
+        const cursor = snapshot.historyCursor;
+        const page = await git.historyPage(base.path, {
+          roots: cursor.roots,
+          offset,
+          limit: Math.min(historyPageSize, depth - offset),
+        });
+        if (!current()) return null;
+        if (page.commits[0]?.id !== cursor.next) {
+          // A fetch can deepen a shallow clone without moving its pinned tips.
+          snapshot = await git.snapshot(base.path, depth, hiddenBranches);
+          if (!current()) return null;
+          historyDepth.current = depth;
+          setRepo(snapshot);
+          return snapshot;
+        }
+        snapshot = {
+          ...snapshot,
+          commits: [...snapshot.commits, ...page.commits],
+          hasOlderCommits: page.nextCommit !== null,
+          historyCursor: page.nextCommit ? { roots: cursor.roots, next: page.nextCommit } : null,
+        };
+        historyDepth.current = snapshot.commits.length;
+        setRepo(snapshot);
+        if (target && page.commits.some((commit) => commit.id === target)) break;
+      }
       return snapshot;
     } catch (error) {
-      setNotice({ message: errorMessage(error), error: true });
+      if (current()) setNotice({ message: errorMessage(error), error: true });
       return null;
     } finally {
       inFlight.current = false;
@@ -137,6 +203,7 @@ export function useRepositoryState({
     setBusy(true);
     try {
       const snapshot = await git.snapshot(repo.path, historyPageSize, hidden);
+      if (openedTab.current !== tab) return null;
       historyDepth.current = historyPageSize;
       setRepo(snapshot);
       setHiddenBranches(hidden);
@@ -144,9 +211,9 @@ export function useRepositoryState({
       const displayed = visibleHistory(snapshot, hidden);
       if (viewRef.current === "history")
         setSelection((current) => chooseSelection(displayed, "history", current));
-      return { snapshot: displayed, hidden };
+      return { snapshot, hidden };
     } catch (error) {
-      setNotice({ message: errorMessage(error), error: true });
+      if (openedTab.current === tab) setNotice({ message: errorMessage(error), error: true });
       return null;
     } finally {
       inFlight.current = false;
@@ -161,6 +228,7 @@ export function useRepositoryState({
     graphRepo,
     view,
     setView,
+    navigation,
     viewRef,
     workspaceSelection,
     setSelection,
@@ -168,6 +236,7 @@ export function useRepositoryState({
     setDiffRevision,
     loadingHistory,
     historyDepth,
+    loadSnapshot,
     refresh,
     extendHistory,
     changeBranchVisibility,

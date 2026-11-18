@@ -1,5 +1,5 @@
-import { useMemo, useState, type CSSProperties } from "react";
-import ReferenceRow from "./ReferenceRow";
+import { useMemo, type CSSProperties } from "react";
+import ContextMenuRow from "./ContextMenuRow";
 import { useTranslation } from "./i18n";
 import {
   ChevronDown,
@@ -16,7 +16,7 @@ import {
 } from "./icons";
 import { branchRef, branchTree, folderBranches, type BranchFolder } from "./lib/branches";
 import type { Branch, Snapshot } from "./lib/git";
-import { preferences } from "./lib/preferences";
+import { useSidebarExpansion } from "./useSidebarExpansion";
 
 type Props = {
   path: string;
@@ -50,19 +50,7 @@ export default function BranchSidebar({
   onCredentials,
 }: Props) {
   const { t } = useTranslation();
-  const storageKey = `diffinch.branchFolders:${path || "example"}`;
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
-    try {
-      const saved: unknown = JSON.parse(preferences.getItem(storageKey) ?? "[]");
-      return new Set(
-        Array.isArray(saved)
-          ? saved.filter((item): item is string => typeof item === "string")
-          : [],
-      );
-    } catch {
-      return new Set();
-    }
-  });
+  const { isExpanded, toggle } = useSidebarExpansion(`diffinch.branchFolders:${path || "example"}`);
   const trees = useMemo(() => {
     const remote = branchTree(
       branches.filter((branch) => branch.remote),
@@ -76,14 +64,6 @@ export default function BranchSidebar({
     return { local: branchTree(branches.filter((branch) => !branch.remote)), remote };
   }, [branches, remotes]);
   const excluded = new Set(hidden);
-
-  function toggleFolder(key: string) {
-    const next = new Set(collapsed);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    setCollapsed(next);
-    preferences.setItem(storageKey, JSON.stringify([...next]));
-  }
 
   function visibility(items: Branch[], label: string) {
     const count = items.filter((branch) => !excluded.has(branchRef(branch))).length;
@@ -107,13 +87,13 @@ export default function BranchSidebar({
     return (
       <>
         {folder.branches.map((branch) => (
-          <ReferenceRow
+          <ContextMenuRow
             key={branchRef(branch)}
             className={`branch-tree-row${branch.current ? " active-branch" : ""}`}
             style={{ "--branch-depth": depth } as CSSProperties}
             disabled={busy}
-            deleteLabel={t("deleteNamed", { name: branch.name })}
-            onDelete={!branch.current ? () => onDelete(branch) : undefined}
+            actionLabel={t("deleteNamed", { name: branch.name })}
+            onAction={!branch.current ? () => onDelete(branch) : undefined}
           >
             <button
               className={`branch-tree-select${excluded.has(branchRef(branch)) ? " branch-hidden" : ""}`}
@@ -127,11 +107,11 @@ export default function BranchSidebar({
               {branch.current && <span className="branch-dot" aria-label={t("currentBranch")} />}
             </button>
             {visibility([branch], branch.name)}
-          </ReferenceRow>
+          </ContextMenuRow>
         ))}
         {folder.folders.map((child) => {
           const key = `${scope}/${child.path}`;
-          const expanded = !collapsed.has(key);
+          const expanded = isExpanded(key);
           const descendants = folderBranches(child);
           const remote = scope === "remote" && depth === 0;
           const Icon = remote ? Server : Folder;
@@ -145,7 +125,7 @@ export default function BranchSidebar({
                     name: child.path,
                   })}
                   title={child.path}
-                  onClick={() => toggleFolder(key)}
+                  onClick={() => toggle(key)}
                 >
                   {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                   <Icon size={13} />
@@ -206,7 +186,7 @@ export default function BranchSidebar({
       {Object.entries(trees).map(([scope, tree]) => {
         const remote = scope === "remote";
         const label = t(remote ? "remoteBranches" : "localBranches");
-        const expanded = !collapsed.has(scope);
+        const expanded = isExpanded(scope);
         const items = folderBranches(tree);
         const Icon = remote ? Cloud : GitBranch;
         return (
@@ -215,7 +195,7 @@ export default function BranchSidebar({
               <button
                 className="branch-tree-select"
                 aria-expanded={expanded}
-                onClick={() => toggleFolder(scope)}
+                onClick={() => toggle(scope)}
               >
                 {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                 <Icon size={14} />

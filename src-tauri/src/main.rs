@@ -7,35 +7,81 @@ use git::{CredentialAccount, CredentialAccountRequest, CredentialTarget, Credent
 use git::{ToolKind, ToolState};
 
 use git::{
-    AuthorPlan, CommitSearch, Comparison, Conflict, Diff, DiffOptions, DiscardPlan, GitError,
-    RebasePlan, RemoteRefKind, RemoteRefs, Repo, Result as CommandResult, SearchField, Snapshot,
-    Transfer, WorkingState,
+    AuthorPlan, Cancellation, CommitSearch, CommitSearchRequest, Comparison, Conflict, Diff,
+    DiffOptions, DiscardPlan, GitError, HistoryPage, HistoryPageRequest, RebasePlan, RemoteRefKind,
+    RemoteRefs, Repo, Result as CommandResult, Snapshot, Transfer, WorkingState,
 };
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex, Weak,
-    },
+    sync::{mpsc, Arc, Mutex, Weak},
 };
 use tauri::{ipc::Channel, AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 #[derive(Default)]
-struct GitGates(Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>);
+struct GitGates(Mutex<HashMap<PathBuf, Weak<GitGate>>>);
 
 #[derive(Default)]
-struct Transfers(Mutex<HashMap<String, Arc<AtomicBool>>>);
+struct GitGate {
+    running: Mutex<()>,
+    waiters: Mutex<Vec<Weak<mpsc::Sender<()>>>>,
+}
+
+impl GitGate {
+    fn run<T>(&self, run: impl FnOnce() -> CommandResult<T>) -> CommandResult<T> {
+        struct WakeWaiters<'a>(&'a GitGate);
+        impl Drop for WakeWaiters<'_> {
+            fn drop(&mut self) {
+                for waiter in self
+                    .0
+                    .waiters
+                    .lock()
+                    .unwrap()
+                    .drain(..)
+                    .filter_map(|weak| weak.upgrade())
+                {
+                    let _ = waiter.send(());
+                }
+            }
+        }
+        let (sender, wake) = mpsc::channel();
+        let sender = Arc::new(sender);
+        if let Some(cancel) = git::operation_cancellation() {
+            cancel.wake_on_cancel(&sender);
+        }
+        let guard = loop {
+            // Subscribe under the same mutex used to notify on release.
+            let mut waiting = self.waiters.lock().map_err(|_| "workerLocked")?;
+            git::check_operation()?;
+            match self.running.try_lock() {
+                Ok(guard) => break guard,
+                Err(std::sync::TryLockError::Poisoned(_)) => return Err("workerLocked".into()),
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    waiting.retain(|waiter| waiter.strong_count() > 0);
+                    waiting.push(Arc::downgrade(&sender));
+                }
+            }
+            drop(waiting);
+            wake.recv().map_err(|_| "workerLocked")?;
+        };
+        let _notify = WakeWaiters(self);
+        let _guard = guard; // Release the repository before waking its waiters, including on unwind.
+        run()
+    }
+}
+
+#[derive(Default)]
+struct Transfers(Mutex<HashMap<String, Arc<Cancellation>>>);
 
 async fn with_transfer<T>(
     app: &AppHandle,
     id: String,
     progress: Channel<u8>,
-    run: impl AsyncFnOnce(Arc<AtomicBool>, Channel<u8>) -> CommandResult<T>,
+    run: impl AsyncFnOnce(Arc<Cancellation>, Channel<u8>) -> CommandResult<T>,
 ) -> CommandResult<T> {
     let state = app.state::<Transfers>();
-    let cancelled = Arc::new(AtomicBool::new(false));
+    let cancelled = Arc::new(Cancellation::default());
     {
         let mut active = state.0.lock().map_err(|_| "workerLocked")?;
         if active.contains_key(&id) {
@@ -61,22 +107,12 @@ fn with_gate<T>(
         if let Some(gate) = gates.get(&key).and_then(Weak::upgrade) {
             gate
         } else {
-            let gate = Arc::new(Mutex::new(()));
+            let gate = Arc::new(GitGate::default());
             gates.insert(key, Arc::downgrade(&gate));
             gate
         }
     };
-    let _guard = loop {
-        git::check_operation()?;
-        match gate.try_lock() {
-            Ok(guard) => break guard,
-            Err(std::sync::TryLockError::Poisoned(_)) => return Err("workerLocked".into()),
-            Err(std::sync::TryLockError::WouldBlock) => {
-                std::thread::sleep(std::time::Duration::from_millis(80))
-            }
-        }
-    };
-    run()
+    gate.run(run)
 }
 
 async fn worker<T: Send + 'static>(
@@ -106,7 +142,7 @@ async fn repo_worker<T: Send + 'static>(
 async fn controlled_repo_worker<T: Send + 'static>(
     app: AppHandle,
     path: String,
-    cancelled: Arc<AtomicBool>,
+    cancelled: Arc<Cancellation>,
     progress: Channel<u8>,
     run: impl FnOnce(Repo) -> CommandResult<T> + Send + 'static,
 ) -> CommandResult<T> {
@@ -168,15 +204,26 @@ async fn snapshot(
 }
 
 #[tauri::command]
+async fn history_page(
+    app: AppHandle,
+    path: String,
+    request: HistoryPageRequest,
+) -> CommandResult<HistoryPage> {
+    repo_worker(app, path, move |repo| repo.history_page(request)).await
+}
+
+#[tauri::command]
 async fn search_commits(
     app: AppHandle,
     path: String,
-    query: String,
-    field: SearchField,
-    case_sensitive: bool,
+    request: CommitSearchRequest,
+    progress: Channel<u8>,
 ) -> CommandResult<CommitSearch> {
-    repo_worker(app, path, move |repo| {
-        repo.search_commits(&query, field, case_sensitive)
+    with_transfer(&app, request.id, progress, async |cancelled, progress| {
+        controlled_repo_worker(app.clone(), path, cancelled, progress, move |repo| {
+            repo.search_commits(&request.query, request.field, request.case_sensitive)
+        })
+        .await
     })
     .await
 }
@@ -262,7 +309,7 @@ async fn fetch_repository(
 #[tauri::command]
 fn cancel_transfer(transfers: State<'_, Transfers>, id: String) -> CommandResult<()> {
     if let Some(transfer) = transfers.0.lock().map_err(|_| "workerLocked")?.get(&id) {
-        transfer.store(true, Ordering::Relaxed);
+        transfer.cancel();
     }
     Ok(())
 }
@@ -497,6 +544,7 @@ fn main() {
             choose_folder,
             snapshot,
             search_commits,
+            history_page,
             init_repository,
             clone_repository,
             fetch_repository,
@@ -524,4 +572,55 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("Diffinch could not launch");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{thread, time::Duration};
+
+    #[test]
+    fn cancelled_waiter_leaves_an_occupied_repository_and_the_next_waiter_runs() {
+        let gate = GitGate::default();
+        let cancelled = Arc::new(Cancellation::default());
+        let (entered, held) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        thread::scope(|scope| {
+            let gate = &gate;
+            let holder = scope.spawn(move || {
+                gate.run(|| {
+                    entered.send(()).unwrap();
+                    released.recv_timeout(Duration::from_secs(5)).unwrap();
+                    Ok(())
+                })
+            });
+            held.recv().unwrap();
+            let token = cancelled.clone();
+            let (finished, result) = mpsc::channel();
+            scope.spawn(move || {
+                let status: CommandResult<()> = git::with_operation(
+                    token,
+                    |_| {},
+                    || gate.run(|| panic!("cancelled waiter ran")),
+                );
+                finished.send(status).unwrap();
+            });
+            let start = std::time::Instant::now();
+            while gate.waiters.lock().unwrap().is_empty() {
+                assert!(start.elapsed() < Duration::from_secs(3));
+                thread::yield_now();
+            }
+            cancelled.cancel();
+            assert!(result
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap()
+                .is_err_and(|err: GitError| {
+                    serde_json::to_value(err).unwrap()["key"] == "operationInterrupted"
+                }));
+            let next = scope.spawn(|| gate.run(|| Ok(42)));
+            release.send(()).unwrap();
+            holder.join().unwrap().unwrap();
+            assert_eq!(next.join().unwrap().unwrap(), 42);
+        });
+    }
 }

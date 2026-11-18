@@ -526,5 +526,25 @@
         "ignoreWhitespace": true
       }
     }
+  },
+  {
+    "command": "search_commits",
+    "request": {
+      "id": "search-example",
+      "query": "contract",
+      "field": "all",
+      "caseSensitive": false
+    }
+  },
+  {
+    "command": "history_page",
+    "request": {
+      "roots": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ],
+      "offset": 160,
+      "limit": 160
+    }
   }
 ]

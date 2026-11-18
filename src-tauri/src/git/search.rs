@@ -1,7 +1,15 @@
-use super::{model::Commit, process::read_output, string, GitError, Repo, Result, OUTPUT_LIMIT};
+use super::{
+    model::Commit,
+    process::{operation_cancellation, read_output, supervise},
+    string, GitError, Repo, Result, OUTPUT_LIMIT,
+};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
-use std::{io::Read, process::Stdio, thread};
+use std::{
+    io::{Read, Write},
+    process::{Command, Stdio},
+    thread,
+};
 
 const SEARCH_LIMIT: usize = 200;
 
@@ -14,6 +22,15 @@ pub enum SearchField {
     Hash,
     Author,
     Reference,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitSearchRequest {
+    pub id: String,
+    pub query: String,
+    pub field: SearchField,
+    pub case_sensitive: bool,
 }
 
 #[derive(Serialize)]
@@ -48,8 +65,7 @@ impl Repo {
         } else {
             query.to_lowercase()
         };
-        let head = self.status()?.head;
-        let stashes = self.text(["stash", "list", "--format=%H"])?;
+        let stashes = self.text(["stash", "list", "--no-show-signature", "--format=%H"])?;
         let mut command = self.command();
         command.args([
             "log",
@@ -61,102 +77,138 @@ impl Repo {
             "--decorate=full",
             "-z",
             "--format=%H%x00%h%x00%P%x00%s%x00%an%x00%aI%x00%ae%x00%b%x00%D",
+            "--stdin",
+            "--",
         ]);
-        // Include detached HEAD and older stashes, regardless of graph visibility.
-        command.args(head).args(stashes.lines()).arg("--");
-        command
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let mut child = command
-            .spawn()
-            .map_err(|error| GitError::new("gitStartFailed", error))?;
-        let mut stdout = BufReader::new(child.stdout.take().expect("piped stdout"));
-        let stderr = child.stderr.take().expect("piped stderr");
-        thread::scope(|scope| {
-            let stderr = scope.spawn(move || read_output(stderr, OUTPUT_LIMIT));
-            // Stream the entire history, retaining only matching commits. Unlike the
-            // graph, search has no history-depth cutoff or unbounded log buffer.
-            let result = (|| -> Result<CommitSearch> {
-                let mut result = CommitSearch::default();
-                let mut retained_bytes = 0;
-                loop {
-                    let mut fields = Vec::with_capacity(9);
-                    let mut record_bytes = 0;
-                    for index in 0..9 {
-                        let mut bytes = Vec::new();
-                        let count = Read::by_ref(&mut stdout)
-                            .take((OUTPUT_LIMIT + 1) as u64)
-                            .read_until(0, &mut bytes)
-                            .map_err(|error| GitError::new("gitIoFailed", error))?;
-                        if count == 0 && index == 0 {
-                            return Ok(result);
-                        }
-                        record_bytes += count;
-                        if record_bytes > OUTPUT_LIMIT || bytes.last() != Some(&0) {
-                            return Err("tooMuchData".into());
-                        }
-                        bytes.pop();
-                        fields.push(string(&bytes));
-                    }
-                    let indices: &[usize] = match field {
-                        SearchField::All => &[0, 3, 4, 6, 7, 8],
-                        SearchField::Title => &[3],
-                        SearchField::Description => &[7],
-                        SearchField::Hash => &[0],
-                        SearchField::Author => &[4, 6],
-                        SearchField::Reference => &[8],
-                    };
-                    if !indices.iter().any(|&index| {
-                        if case_sensitive {
-                            fields[index].contains(&needle)
-                        } else {
-                            fields[index].to_lowercase().contains(&needle)
-                        }
-                    }) {
-                        continue;
-                    }
-                    if result.commits.len() == SEARCH_LIMIT
-                        || retained_bytes + record_bytes > OUTPUT_LIMIT
-                    {
-                        result.has_more = true;
-                        return Ok(result);
-                    }
-                    retained_bytes += record_bytes;
-                    result.commits.push(SearchCommit {
-                        commit: Commit {
-                            id: fields[0].clone(),
-                            short_id: fields[1].clone(),
-                            parents: fields[2]
-                                .split_ascii_whitespace()
-                                .map(str::to_owned)
-                                .collect(),
-                            subject: fields[3].clone(),
-                            author: fields[4].clone(),
-                            date: fields[5].clone(),
-                            email: fields[6].clone(),
-                        },
-                        description: fields[7].trim_end().into(),
-                        references: fields[8].clone(),
-                    });
-                }
-            })();
-            let stopped = result.as_ref().map_or(true, |result| result.has_more);
-            if stopped {
-                let _ = child.kill();
-            }
-            let status = child
-                .wait()
-                .map_err(|error| GitError::new("gitIoFailed", error))?;
-            let stderr = stderr
-                .join()
-                .expect("stderr reader")
-                .map_err(|error| GitError::new("gitIoFailed", error))?;
-            if !stopped && !status.success() {
-                return Err(GitError::new("gitOutput", string(&stderr.bytes)));
-            }
-            result
+        // --all includes detached HEAD. Older stash entries live only in the reflog.
+        search_log(command, &stashes, &needle, field, case_sensitive)
+    }
+}
+
+fn search_log(
+    mut command: Command,
+    roots: &str,
+    needle: &str,
+    field: SearchField,
+    case_sensitive: bool,
+) -> Result<CommitSearch> {
+    command
+        .stdin(if roots.is_empty() {
+            Stdio::null()
+        } else {
+            Stdio::piped()
         })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let cancelled = operation_cancellation();
+    #[cfg(unix)]
+    if cancelled.is_some() {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|error| GitError::new("gitStartFailed", error))?;
+    let mut stdout = BufReader::new(child.stdout.take().expect("piped stdout"));
+    let stderr = child.stderr.take().expect("piped stderr");
+    let input = child.stdin.take();
+    let (status, (result, stderr, written)) =
+        supervise(&mut child, cancelled.as_deref(), |child| {
+            thread::scope(|scope| {
+                let stderr = scope.spawn(move || read_output(stderr, OUTPUT_LIMIT));
+                let writer =
+                    input.map(|mut pipe| scope.spawn(move || pipe.write_all(roots.as_bytes())));
+                // Stream the entire history, retaining only matching commits. Unlike the
+                // graph, search has no history-depth cutoff or unbounded log buffer.
+                let result = collect_matches(&mut stdout, needle, field, case_sensitive);
+                let stopped = result.as_ref().map_or(true, |result| result.has_more);
+                if stopped {
+                    let _ = child.kill();
+                }
+                let stderr = stderr
+                    .join()
+                    .expect("stderr reader")
+                    .map_err(|error| GitError::new("gitIoFailed", error))?;
+                let written = writer
+                    .map(|writer| writer.join().expect("stdin writer"))
+                    .transpose();
+                Ok((result?, stderr, written))
+            })
+        })?;
+    if !result.has_more {
+        if !status.success() {
+            return Err(GitError::new("gitOutput", string(&stderr.bytes)));
+        }
+        written.map_err(|error| GitError::new("gitIoFailed", error))?;
+    }
+    Ok(result)
+}
+
+fn collect_matches(
+    stdout: &mut impl BufRead,
+    needle: &str,
+    field: SearchField,
+    case_sensitive: bool,
+) -> Result<CommitSearch> {
+    let mut result = CommitSearch::default();
+    let mut retained_bytes = 0;
+    loop {
+        let mut fields = Vec::with_capacity(9);
+        let mut record_bytes = 0;
+        for index in 0..9 {
+            let mut bytes = Vec::new();
+            let count = Read::by_ref(&mut *stdout)
+                .take((OUTPUT_LIMIT + 1) as u64)
+                .read_until(0, &mut bytes)
+                .map_err(|error| GitError::new("gitIoFailed", error))?;
+            if count == 0 && index == 0 {
+                return Ok(result);
+            }
+            record_bytes += count;
+            if record_bytes > OUTPUT_LIMIT || bytes.last() != Some(&0) {
+                return Err("tooMuchData".into());
+            }
+            bytes.pop();
+            fields.push(string(&bytes));
+        }
+        let indices: &[usize] = match field {
+            SearchField::All => &[0, 3, 4, 6, 7, 8],
+            SearchField::Title => &[3],
+            SearchField::Description => &[7],
+            SearchField::Hash => &[0],
+            SearchField::Author => &[4, 6],
+            SearchField::Reference => &[8],
+        };
+        if !indices.iter().any(|&index| {
+            if case_sensitive {
+                fields[index].contains(needle)
+            } else {
+                fields[index].to_lowercase().contains(needle)
+            }
+        }) {
+            continue;
+        }
+        if result.commits.len() == SEARCH_LIMIT || retained_bytes + record_bytes > OUTPUT_LIMIT {
+            result.has_more = true;
+            return Ok(result);
+        }
+        retained_bytes += record_bytes;
+        result.commits.push(SearchCommit {
+            commit: Commit {
+                id: fields[0].clone(),
+                short_id: fields[1].clone(),
+                parents: fields[2]
+                    .split_ascii_whitespace()
+                    .map(str::to_owned)
+                    .collect(),
+                subject: fields[3].clone(),
+                author: fields[4].clone(),
+                date: fields[5].clone(),
+                email: fields[6].clone(),
+            },
+            description: fields[7].trim_end().into(),
+            references: fields[8].clone(),
+        });
     }
 }
 
@@ -165,6 +217,52 @@ mod tests {
     use super::super::tests::{commit_file, repo};
     use super::super::{DiffOptions, HISTORY_LIMIT};
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn cancellation_interrupts_a_search_blocked_before_its_first_record() {
+        use crate::git::{with_operation, Cancellation};
+        use std::{
+            sync::Arc,
+            time::{Duration, Instant},
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let started = dir.path().join("started");
+        let mut command = Command::new("sh");
+        command
+            .current_dir(dir.path())
+            .args(["-c", "touch started; sleep 8"]);
+        let cancelled = Arc::new(Cancellation::default());
+        let signal = cancelled.clone();
+        let before = Instant::now();
+        thread::scope(|s| {
+            s.spawn(|| {
+                while !started.exists() && before.elapsed() < Duration::from_secs(4) {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                signal.cancel();
+            });
+            let result = with_operation(
+                cancelled,
+                |_| {},
+                || search_log(command, "", "absent", SearchField::All, false),
+            );
+            assert!(result.is_err_and(|error| error.key == "operationInterrupted"));
+        });
+        assert!(started.exists() && before.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn searches_committed_history_without_reading_the_working_index() {
+        let (_dir, repo) = repo();
+        let id = commit_file(&repo, "file", "one", "Find this title");
+        std::fs::write(repo.git_dir().unwrap().join("index"), b"incomplete index").unwrap();
+        assert!(repo.status().is_err());
+        let result = repo
+            .search_commits("this title", SearchField::Title, false)
+            .unwrap();
+        assert_eq!(result.commits[0].commit.id, id);
+    }
 
     #[test]
     fn searches_literal_titles_descriptions_hashes_authors_and_refs() {

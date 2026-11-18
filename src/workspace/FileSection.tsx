@@ -7,7 +7,7 @@ import {
 import FileRow from "../FileRow";
 import { useTranslation } from "../i18n";
 import { ChevronDown, ChevronRight, FileCode2, GitCommitHorizontal } from "../icons";
-import { mac, shortcut, type Action, type FileChange } from "../lib/git";
+import { canDiscard, mac, shortcut, type Action, type FileChange } from "../lib/git";
 import { selectFile } from "./selection";
 import type { WorkspaceSelection } from "./types";
 
@@ -20,6 +20,7 @@ export default function FileSection({
   query,
   selection,
   onSelect,
+  onDiscard,
   busy,
   inFlight,
   action,
@@ -32,6 +33,7 @@ export default function FileSection({
   query: string;
   selection: WorkspaceSelection | null;
   onSelect: (selection: WorkspaceSelection) => void;
+  onDiscard?: (file: FileChange) => void;
   busy: boolean;
   inFlight: RefObject<boolean>;
   action: (action: Action) => Promise<void>;
@@ -189,6 +191,7 @@ export default function FileSection({
                   select(item.id, event.shiftKey, mac ? event.metaKey : event.ctrlKey);
                 }}
                 onStage={() => action({ kind: inIndex ? "unstage" : "stage", id: item.id })}
+                onDiscard={onDiscard && canDiscard(item) ? () => onDiscard(item) : undefined}
               />
             ))
           ) : (

@@ -2322,9 +2322,41 @@ kbd {
   font-weight: 700;
   letter-spacing: 0.075em;
 }
-.graph-columns span,
+.graph-column,
 .graph-row > :not(svg) {
   padding-inline: 5px;
+}
+.graph-column {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+}
+.graph-column:last-child {
+  min-width: 72px;
+}
+.graph-column-divider {
+  position: absolute;
+  z-index: 1;
+  inset-block: 0;
+  right: -5px;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+.graph-column-divider::after {
+  content: "";
+  position: absolute;
+  inset-block: 20%;
+  left: 4px;
+  width: 1px;
+  background: var(--line-strong);
+}
+.graph-column-divider:is(:hover, :focus-visible, :active)::after {
+  width: 2px;
+  background: var(--accent);
 }
 .graph-row {
   --graph-row: var(--white);
@@ -2362,6 +2394,7 @@ kbd {
   padding: 0;
   position: relative;
   align-self: stretch;
+  overflow: hidden;
 }
 .commit-lanes {
   position: absolute;
@@ -2376,6 +2409,11 @@ kbd {
   display: grid;
   gap: 3px;
   min-width: 155px;
+}
+.graph-table[data-custom-columns] .graph-summary {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
 }
 .graph-subject {
   width: 0;
@@ -3642,10 +3680,10 @@ dialog::backdrop {
   outline-offset: -2px;
   background: var(--hover);
 }
-.reference-context-menu button {
+.row-context-menu button {
   overflow-wrap: anywhere;
 }
-.reference-context-menu button > svg {
+.row-context-menu button > svg {
   flex: none;
 }
 .dropdown.popup-menu[data-anchored] {

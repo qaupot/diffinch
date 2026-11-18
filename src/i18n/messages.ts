@@ -590,6 +590,11 @@ export const messages = {
   refresh: ["Refresh ({shortcut})", "새로 고침 ({shortcut})", "更新（{shortcut}）"],
   filterFiles: ["Filter files", "파일 필터링", "ファイルを絞り込む"],
   discard: ["Discard…", "버리기…", "破棄…"],
+  discardFileChanges: [
+    "Discard changes to {path}…",
+    "{path}의 변경 사항 버리기…",
+    "{path} の変更を破棄…",
+  ],
   discardQuestion: [
     "Discard unstaged changes?",
     "스테이징되지 않은 변경 사항을 버릴까요?",
@@ -839,6 +844,17 @@ export const messages = {
     "ドラッグして変更と差分の幅を調整します。ダブルクリックで元に戻します。",
   ],
   commitGraphSize: ["Commit graph size", "커밋 그래프 크기", "コミットグラフのサイズ"],
+  graphColumn: ["Graph", "그래프", "グラフ"],
+  resizeColumnPair: [
+    "Resize {left} and {right} columns",
+    "{left} 열과 {right} 열의 너비 조절",
+    "{left}列と{right}列の幅を調整",
+  ],
+  resizeGraphColumns: [
+    "Drag to resize columns. Double-click to reset all columns.",
+    "드래그하여 열 너비를 조절합니다. 두 번 클릭하면 모든 열 너비가 초기화됩니다.",
+    "ドラッグして列幅を調整します。ダブルクリックですべての列幅を元に戻します。",
+  ],
   resizeCommitGraph: [
     "Drag to resize Commit graph and Diff. Double-click to reset.",
     "드래그하여 커밋 그래프와 차이 보기의 크기를 조절합니다. 두 번 클릭하면 초기화됩니다.",

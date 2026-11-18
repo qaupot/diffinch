@@ -34,7 +34,7 @@ export function useGitOperations({
   setNotice: (notice: WorkspaceNotice | null) => void;
 }) {
   const { t } = useTranslation();
-  const { repo, setRepo, hiddenBranches, historyDepth, viewRef, setSelection, setDiffRevision } =
+  const { repo, setRepo, hiddenBranches, loadSnapshot, viewRef, setSelection, setDiffRevision } =
     repository;
   const { inFlight, setBusy, runTransfer } = activity;
   const { setModal, setModalError } = dialogs;
@@ -119,20 +119,34 @@ export function useGitOperations({
       if (next.kind === "commit") {
         draft.reset();
       }
-      const snapshot = await git.snapshot(repo.path, historyDepth.current, hiddenBranches);
-      if (next.kind === "saveSettings") setSign(snapshot.settings.signCommits);
-      setRepo(snapshot);
-      setDiffRevision((revision) => revision + 1);
-      setSelection((current) =>
-        chooseSelection(
-          visibleHistory(snapshot, hiddenBranches),
-          viewRef.current,
-          next.kind === "changeAuthor" && snapshot.status.head
-            ? { kind: "commit", id: snapshot.status.head }
-            : current,
-        ),
+      const snapshot = await loadSnapshot(
+        [
+          "stage",
+          "unstage",
+          "stageAll",
+          "unstageAll",
+          "stageFiles",
+          "unstageFiles",
+          "hunk",
+        ].includes(next.kind)
+          ? "working"
+          : "full",
       );
-      setNotice({ message: { key }, error: false });
+      if (snapshot) {
+        if (next.kind === "saveSettings") setSign(snapshot.settings.signCommits);
+        setRepo(snapshot);
+        setDiffRevision((revision) => revision + 1);
+        setSelection((current) =>
+          chooseSelection(
+            visibleHistory(snapshot, hiddenBranches),
+            viewRef.current,
+            next.kind === "changeAuthor" && snapshot.status.head
+              ? { kind: "commit", id: snapshot.status.head }
+              : current,
+          ),
+        );
+        setNotice({ message: { key }, error: false });
+      }
       if (next.kind === "createWorktree") {
         const opened = await git.snapshot(`${next.parent}/${next.name}`);
         acceptRepo(opened, "worktreeCreated", repo.path);
@@ -171,7 +185,8 @@ export function useGitOperations({
       if (message.key === "operationInterrupted") setModal(null);
       if (!completed) {
         try {
-          const snapshot = await git.snapshot(repo.path, historyDepth.current, hiddenBranches);
+          const snapshot = await loadSnapshot();
+          if (!snapshot) return;
           setRepo(snapshot);
           setDiffRevision((revision) => revision + 1);
           if (!repo.operation && snapshot.operation) {

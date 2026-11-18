@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import { errorMessage, type LocalizedMessage } from "./i18n";
 import { git, type CommitSearch, type SearchCommit, type Snapshot } from "./lib/git";
 
@@ -40,7 +40,6 @@ export function useCommitSearch(
   const [result, setResult] = useState<CommitSearch | null>(null);
   const [error, setError] = useState<LocalizedMessage | null>(null);
   const [pending, setPending] = useState(false);
-  const running = useRef(Promise.resolve());
   // Ref changes can add matches or change reference labels. Working-tree edits
   // should not restart a full-history scan or clear the selected result.
   const historyKey = JSON.stringify([
@@ -51,9 +50,9 @@ export function useCommitSearch(
     repo.stashes.map(({ id, tip }) => [id, tip]),
   ]);
   const select = useEffectEvent(onSelect);
-  const search = useEffectEvent((text: string, caseSensitive: boolean) =>
+  const search = useEffectEvent((text: string, caseSensitive: boolean, signal: AbortSignal) =>
     repo.path
-      ? git.searchCommits(repo.path, text, "all", caseSensitive)
+      ? git.searchCommits(repo.path, text, "all", caseSensitive, signal)
       : searchDemo(repo, text, caseSensitive),
   );
 
@@ -65,25 +64,22 @@ export function useCommitSearch(
     setPending(!!text && !composing);
     if (!text || composing) return;
 
-    let active = true;
-    const timer = window.setTimeout(() => {
-      // Serialize full-history scans and skip queries superseded while waiting.
-      running.current = running.current.then(async () => {
-        if (!active) return;
-        try {
-          const next = await search(text, matchCase);
-          if (!active) return;
-          setResult(next);
-          select(next.commits[0] ?? null);
-        } catch (error) {
-          if (active) setError(errorMessage(error));
-        } finally {
-          if (active) setPending(false);
-        }
-      });
+    const controller = new AbortController();
+    const { signal } = controller;
+    const timer = window.setTimeout(async () => {
+      try {
+        const next = await search(text, matchCase, signal);
+        if (signal.aborted) return;
+        setResult(next);
+        select(next.commits[0] ?? null);
+      } catch (error) {
+        if (!signal.aborted) setError(errorMessage(error));
+      } finally {
+        if (!signal.aborted) setPending(false);
+      }
     }, 250);
     return () => {
-      active = false;
+      controller.abort();
       window.clearTimeout(timer);
     };
   }, [repo.path, historyKey, query, matchCase, composing]);

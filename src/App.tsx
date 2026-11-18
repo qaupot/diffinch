@@ -87,7 +87,7 @@ function AppShell({ locale, setLocale }: { locale: Locale; setLocale: (locale: L
     activePath,
     setSession,
     restoreError,
-    setRestoreError,
+    dismissRestoreError,
     recents,
     acceptRepo,
     closeTab,
@@ -165,9 +165,7 @@ function AppShell({ locale, setLocale }: { locale: Locale; setLocale: (locale: L
       {storageError ? (
         <Notice message={{ key: storageError }} error onDismiss={preferences.dismissError} />
       ) : (
-        restoreError && (
-          <Notice message={restoreError} error onDismiss={() => setRestoreError(null)} />
-        )
+        restoreError && <Notice message={restoreError} error onDismiss={dismissRestoreError} />
       )}
     </div>
   );
@@ -181,6 +179,7 @@ const emptyTab: RepositoryTab = {
     branches: [],
     worktrees: [],
     commits: [],
+    historyCursor: null,
     hasOlderCommits: false,
     stashes: [],
     tags: [],

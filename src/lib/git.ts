@@ -5,6 +5,7 @@ import type {
   Action,
   AuthorPlan,
   CommitSearch,
+  CommitSearchRequest,
   Comparison,
   Conflict,
   CredentialAccount,
@@ -17,6 +18,8 @@ import type {
   FileChange,
   FileInspectionRequest,
   FileInspectionResult,
+  HistoryPage,
+  HistoryPageRequest,
   RebasePlan,
   RefreshScope,
   RemoteRefKind,
@@ -39,6 +42,8 @@ export const historyLimit = 2000;
 
 export const staged = (file: FileChange) => file.index !== "." && !file.conflict;
 export const unstaged = (file: FileChange) => file.worktree !== "." || file.conflict;
+export const canDiscard = (file: FileChange) =>
+  !file.conflict && !file.submodule && file.worktree !== "?" && file.worktree !== ".";
 export const basename = (path: string) => path.split("/").at(-1) ?? path;
 export const dirname = (path: string) => path.slice(0, Math.max(0, path.lastIndexOf("/")));
 
@@ -59,8 +64,38 @@ export const git = {
   chooseFolder: (title: string) => desktop<string | null>("choose_folder", { title }),
   snapshot: (path: string, limit?: number, hiddenBranches: readonly string[] = []) =>
     desktop<Snapshot>("snapshot", { path, historyLimit: limit, hiddenBranches }),
-  searchCommits: (path: string, query: string, field: SearchField, caseSensitive: boolean) =>
-    desktop<CommitSearch>("search_commits", { path, query, field, caseSensitive }),
+  historyPage: (path: string, request: HistoryPageRequest) =>
+    desktop<HistoryPage>("history_page", { path, request }),
+  searchCommits: async (
+    path: string,
+    query: string,
+    field: SearchField,
+    caseSensitive: boolean,
+    signal: AbortSignal,
+  ) => {
+    const request: CommitSearchRequest = { id: crypto.randomUUID(), query, field, caseSensitive };
+    let ready = false;
+    let sent = false;
+    const cancel = () => {
+      if (ready && !sent) {
+        sent = true;
+        void git.cancelTransfer(request.id).catch(() => {});
+      }
+    };
+    signal.addEventListener("abort", cancel);
+    try {
+      return await desktop<CommitSearch>("search_commits", {
+        path,
+        request,
+        progress: new Channel<number>(() => {
+          ready = true;
+          if (signal.aborted) cancel();
+        }),
+      });
+    } finally {
+      signal.removeEventListener("abort", cancel);
+    }
+  },
   workingState: (path: string) => desktop<WorkingState>("working_state", { path }),
   watch: (path: string, id: string, onChange: (scope: RefreshScope) => void) =>
     desktop<void>("watch_repository", { path, id, changes: new Channel(onChange) }),

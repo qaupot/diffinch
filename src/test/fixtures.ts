@@ -27,6 +27,7 @@ export function snapshot(path = "/repository"): Snapshot {
     branches: [],
     worktrees: [],
     commits: [],
+    historyCursor: null,
     hasOlderCommits: false,
     stashes: [],
     tags: [],

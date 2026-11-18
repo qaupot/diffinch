@@ -5,10 +5,10 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type RefObject,
 } from "react";
 import { useTranslation } from "./i18n";
+import HistoryTable from "./HistoryTable";
 import {
   Archive,
   ArrowDown,
@@ -649,13 +649,7 @@ export default function HistoryGraph({
         className="graph-scroll"
         aria-label={t("commitsLabel")}
       >
-        <div className="graph-table" style={{ "--graph-lanes": `${width}px` } as CSSProperties}>
-          <div data-virtual-sticky className="graph-columns" aria-hidden="true">
-            <span />
-            <span>{t("commit")}</span>
-            <span>{t("author")}</span>
-            <span>{t("dateTime")}</span>
-          </div>
+        <HistoryTable id={`${id}-table`} path={repo.path} graphWidth={width}>
           <div className="graph-spacer" style={{ height: rows.before }} aria-hidden="true" />
           {entries.slice(rows.start, rows.end).map((entry, offset) => {
             const index = rows.start + offset;
@@ -762,12 +756,18 @@ export default function HistoryGraph({
                 >
                   {commit?.author ?? t(entry.id === "staged" ? "staged" : "unstaged")}
                 </span>
-                {commit ? <time dateTime={commit.date}>{date}</time> : <span />}
+                {commit ? (
+                  <time className="truncate" dateTime={commit.date} title={date}>
+                    {date}
+                  </time>
+                ) : (
+                  <span />
+                )}
               </button>
             );
           })}
           <div className="graph-spacer" style={{ height: rows.after }} aria-hidden="true" />
-        </div>
+        </HistoryTable>
         {!entries.length && (
           <div className="graph-empty">
             <GitCommitHorizontal size={24} />

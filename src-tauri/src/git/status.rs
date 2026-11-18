@@ -1,8 +1,10 @@
 use super::{
     model::{
-        Branch, Commit, FileChange, Remote, Settings, Snapshot, Stash, Status, Tag, WorkingState,
+        Branch, Commit, FileChange, HistoryCursor, HistoryPage, HistoryPageRequest, Remote,
+        Settings, Snapshot, Stash, Status, Tag, WorkingState,
     },
     process::execute,
+    refs::validate_oid,
     remotes::redact_remote,
     string, Repo, Result, HISTORY_LIMIT, HISTORY_PAGE_SIZE,
 };
@@ -138,7 +140,6 @@ impl Repo {
         let limit = history_limit
             .unwrap_or(HISTORY_PAGE_SIZE)
             .clamp(1, HISTORY_LIMIT);
-        let count = (limit + 1).to_string();
         let hidden: std::collections::HashSet<&str> =
             hidden_branches.iter().map(String::as_str).collect();
         let visible_tips: Vec<&str> = branches
@@ -154,18 +155,11 @@ impl Repo {
             .map(|branch| branch.tip.as_str())
             .collect();
         let filtered = visible_tips.len() != branches.len();
-        let mut commits: Vec<Commit> = {
+        // Resolve all graph roots once, including linked worktrees, non-branch
+        // refs and tag peeling. Every subsequent page walks the same tips.
+        let history_roots = {
             let mut git = self.command();
-            git.args([
-                "log",
-                "-n",
-                &count,
-                "--topo-order",
-                "--no-show-signature",
-                "-z",
-                "--format=%H%x00%h%x00%P%x00%s%x00%an%x00%aI%x00%ae",
-                "--stdin",
-            ]);
+            git.args(["rev-list", "--no-walk=unsorted", "--stdin"]);
             let mut roots = Vec::new();
             if filtered {
                 // Branch visibility does not hide independent tag or stash history.
@@ -185,28 +179,15 @@ impl Repo {
             if output.truncated {
                 return Err("tooMuchData".into());
             }
-            let log = string(&output.bytes);
-            log.split_terminator('\0')
+            string(&output.bytes)
+                .lines()
+                .map(str::to_owned)
                 .collect::<Vec<_>>()
-                .as_chunks::<7>()
-                .0
-                .iter()
-                .map(|fields| Commit {
-                    id: fields[0].into(),
-                    short_id: fields[1].into(),
-                    parents: fields[2]
-                        .split_ascii_whitespace()
-                        .map(str::to_owned)
-                        .collect(),
-                    subject: fields[3].into(),
-                    author: fields[4].into(),
-                    date: fields[5].into(),
-                    email: fields[6].into(),
-                })
-                .collect()
         };
-        let has_older_commits = commits.len() > limit;
-        commits.truncate(limit);
+        let HistoryPage {
+            commits,
+            next_commit,
+        } = self.read_history(&history_roots, 0, limit)?;
 
         let remotes = self.text(["remote"])?;
         let remotes: Result<Vec<_>> = remotes
@@ -227,19 +208,107 @@ impl Repo {
             .to_string_lossy()
             .into_owned();
         Ok(Snapshot {
+            has_older_commits: next_commit.is_some(),
+            history_cursor: next_commit.map(|next| HistoryCursor {
+                roots: history_roots,
+                next,
+            }),
             path,
             name,
             status,
             branches,
             worktrees: self.worktrees()?,
             commits,
-            has_older_commits,
             stashes,
             tags,
             remotes: remotes?,
             operation: self.operation()?,
             push_lease,
             settings: self.settings()?,
+        })
+    }
+
+    pub fn history_page(&self, request: HistoryPageRequest) -> Result<HistoryPage> {
+        if request.offset >= HISTORY_LIMIT || request.limit == 0 {
+            return Err("tooMuchData".into());
+        }
+        for oid in &request.roots {
+            validate_oid(oid)?;
+        }
+        let limit = request
+            .limit
+            .min(HISTORY_PAGE_SIZE)
+            .min(HISTORY_LIMIT - request.offset);
+        self.read_history(&request.roots, request.offset, limit)
+    }
+
+    fn read_history(&self, roots: &[String], offset: usize, limit: usize) -> Result<HistoryPage> {
+        if roots.is_empty() {
+            return Ok(HistoryPage::default());
+        }
+        let mut git = self.command();
+        git.args([
+            "log",
+            "--topo-order",
+            "--no-show-signature",
+            "-z",
+            "--format=%H%x00%h%x00%P%x00%s%x00%an%x00%aI%x00%ae",
+            &format!("--skip={offset}"),
+            &format!("--max-count={}", limit + 1),
+            "--stdin",
+            "--",
+        ]);
+        let output = execute(git, &[], Some(roots.join("\n").as_bytes()))?;
+        if output.truncated {
+            // A deep refresh may cover several pages the user already loaded.
+            // Retry at page size so each Git read keeps its normal output bound.
+            if limit > HISTORY_PAGE_SIZE {
+                let mut page = self.read_history(roots, offset, HISTORY_PAGE_SIZE)?;
+                while page.next_commit.is_some() && page.commits.len() < limit {
+                    let loaded = page.commits.len();
+                    let next = self.read_history(
+                        roots,
+                        offset + loaded,
+                        HISTORY_PAGE_SIZE.min(limit - loaded),
+                    )?;
+                    if next.commits.first().map(|commit| &commit.id) != page.next_commit.as_ref() {
+                        return Err("staleHistoryAction".into());
+                    }
+                    page.commits.extend(next.commits);
+                    page.next_commit = next.next_commit;
+                }
+                return Ok(page);
+            }
+            return Err("tooMuchData".into());
+        }
+        let log = string(&output.bytes);
+        let mut commits: Vec<Commit> = log
+            .split_terminator('\0')
+            .collect::<Vec<_>>()
+            .as_chunks::<7>()
+            .0
+            .iter()
+            .map(|fields| Commit {
+                id: fields[0].into(),
+                short_id: fields[1].into(),
+                parents: fields[2]
+                    .split_ascii_whitespace()
+                    .map(str::to_owned)
+                    .collect(),
+                subject: fields[3].into(),
+                author: fields[4].into(),
+                date: fields[5].into(),
+                email: fields[6].into(),
+            })
+            .collect();
+        let next_commit = if commits.len() > limit {
+            commits.pop().map(|commit| commit.id)
+        } else {
+            None
+        };
+        Ok(HistoryPage {
+            commits,
+            next_commit,
         })
     }
 

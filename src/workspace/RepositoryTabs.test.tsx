@@ -160,6 +160,8 @@ it("reorders with the keyboard, keeps focus, and announces the new position", as
   fireEvent.keyDown(a, { key: "ArrowLeft", altKey: true, shiftKey: true });
   fireEvent.keyDown(a, { key: "ArrowLeft", altKey: true, shiftKey: true });
   expect(saved().paths).toEqual(["/a", "/b", "/c"]);
+  await new Promise(requestAnimationFrame);
+  expect(a.scrollIntoView).toHaveBeenCalledWith({ block: "nearest", inline: "nearest" });
 });
 
 it("scrolls overflowing tabs while holding a drag near an edge and stops after cancellation", async () => {

@@ -31,12 +31,16 @@ pub use file_history::{FileInspectionRequest, FileInspectionResult};
 #[cfg(test)]
 pub use model::Action;
 pub use model::{
-    AuthorPlan, Comparison, Conflict, Diff, DiffOptions, DiscardPlan, GitActionRequest, RebasePlan,
-    RemoteRefKind, RemoteRefs, Snapshot, WorkingState,
+    AuthorPlan, Comparison, Conflict, Diff, DiffOptions, DiscardPlan, GitActionRequest,
+    HistoryPage, HistoryPageRequest, RebasePlan, RemoteRefKind, RemoteRefs, Snapshot, WorkingState,
 };
-pub use process::{check_operation, with_operation, Transfer};
+pub use process::{
+    check_operation, operation_cancellation, with_operation, Cancellation, Transfer,
+};
 use process::{command, execute, execute_command, Output};
-pub use search::{CommitSearch, SearchField};
+#[cfg(test)]
+use search::SearchField;
+pub use search::{CommitSearch, CommitSearchRequest};
 use serde::Serialize;
 use std::{
     ffi::{OsStr, OsString},

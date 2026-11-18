@@ -3,19 +3,52 @@ use std::{
     cell::RefCell,
     io::{self, Read, Write},
     process::{Child, Command, ExitStatus, Stdio},
-    sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::{mpsc, Arc, Mutex, Weak},
     thread,
-    time::Duration,
 };
 #[cfg(target_os = "macos")]
 use std::{env, path::PathBuf};
 
+#[derive(Default)]
+pub struct Cancellation {
+    state: Mutex<CancelState>,
+}
+
+#[derive(Default)]
+struct CancelState {
+    cancelled: bool,
+    listeners: Vec<Weak<mpsc::Sender<()>>>,
+}
+
+impl Cancellation {
+    pub fn cancel(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.cancelled = true;
+        for listener in state.listeners.drain(..).filter_map(|weak| weak.upgrade()) {
+            let _ = listener.send(());
+        }
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.state.lock().unwrap().cancelled
+    }
+
+    // Dropping the sender unsubscribes a finished command. An operation may
+    // start its next command just as the caller cancels it.
+    pub fn wake_on_cancel(&self, sender: &Arc<mpsc::Sender<()>>) {
+        let mut state = self.state.lock().unwrap();
+        if state.cancelled {
+            let _ = sender.send(());
+        } else {
+            state.listeners.retain(|weak| weak.strong_count() > 0);
+            state.listeners.push(Arc::downgrade(sender));
+        }
+    }
+}
+
 #[derive(Clone)]
 struct Operation {
-    cancelled: Arc<AtomicBool>,
+    cancelled: Arc<Cancellation>,
     progress: Arc<dyn Fn(u8) + Send + Sync>,
 }
 
@@ -26,7 +59,7 @@ thread_local! {
 }
 
 pub fn with_operation<T>(
-    cancelled: Arc<AtomicBool>,
+    cancelled: Arc<Cancellation>,
     progress: impl Fn(u8) + Send + Sync + 'static,
     run: impl FnOnce() -> Result<T>,
 ) -> Result<T> {
@@ -55,7 +88,7 @@ pub fn check_operation() -> Result<()> {
     if OPERATION.with(|slot| {
         slot.borrow()
             .as_ref()
-            .is_some_and(|operation| operation.cancelled.load(Ordering::Relaxed))
+            .is_some_and(|operation| operation.cancelled.is_cancelled())
     }) {
         return Err("transferCancelled".into());
     }
@@ -152,7 +185,7 @@ pub(super) fn execute_with_limit(
 }
 
 pub struct Transfer<'a> {
-    pub cancelled: &'a AtomicBool,
+    pub cancelled: &'a Cancellation,
     pub progress: &'a (dyn Fn(u8) + Sync),
 }
 
@@ -170,7 +203,7 @@ pub(super) fn execute_command(
     });
     let transfer = transfer.or(inherited.as_ref());
     if let Some(transfer) = transfer {
-        if transfer.cancelled.load(Ordering::Relaxed) {
+        if transfer.cancelled.is_cancelled() {
             return Err("transferCancelled".into());
         }
         // Each subprocess may have a different progress phase.
@@ -202,106 +235,142 @@ pub(super) fn execute_command(
     let stderr = child.stderr.take().expect("piped stderr");
     let stdin = child.stdin.take();
     let io_error = |error: io::Error| GitError::new("gitIoFailed", error);
-    let finished = AtomicUsize::new(0);
-    thread::scope(|scope| {
-        let finished = &finished;
-        struct Done<'a>(&'a AtomicUsize);
-        impl Drop for Done<'_> {
-            fn drop(&mut self) {
-                self.0.fetch_add(1, Ordering::Release);
-            }
-        }
-        let stdout = scope.spawn(move || {
-            let _done = Done(finished);
-            read_output(stdout, limit)
+    let (status, (stdout, stderr, written)) =
+        supervise(&mut child, transfer.map(|t| t.cancelled), |_| {
+            thread::scope(|scope| {
+                let stdout = scope.spawn(move || read_output(stdout, limit));
+                let stderr = scope.spawn(move || match transfer {
+                    Some(transfer) => read_progress(stderr, transfer.progress),
+                    None => read_output(stderr, OUTPUT_LIMIT),
+                });
+                let writer = stdin
+                    .zip(input)
+                    .map(|(mut pipe, bytes)| scope.spawn(move || pipe.write_all(bytes)));
+                let stdout = stdout.join().expect("stdout reader").map_err(io_error)?;
+                let stderr = stderr.join().expect("stderr reader").map_err(io_error)?;
+                let written = writer
+                    .map(|writer| writer.join().expect("stdin writer"))
+                    .transpose();
+                Ok((stdout, stderr, written))
+            })
+        })?;
+    if !status.success() && !status.code().is_some_and(|code| accepted.contains(&code)) {
+        let message = String::from_utf8_lossy(&stderr.bytes).trim().to_owned();
+        let message = if message.is_empty() {
+            String::from_utf8_lossy(&stdout.bytes).trim().to_owned()
+        } else {
+            message
+        };
+        return Err(if authentication_required(&message) {
+            // Authentication output can include credential-bearing URLs.
+            // The UI recovers through the existing credential helper dialog.
+            "authenticationRequired".into()
+        } else if message.is_empty() {
+            GitError::new("gitExited", status)
+        } else {
+            GitError::new("gitOutput", message)
         });
-        let stderr = scope.spawn(move || {
-            let _done = Done(finished);
-            match transfer {
-                Some(transfer) => read_progress(stderr, transfer.progress),
-                None => read_output(stderr, OUTPUT_LIMIT),
-            }
-        });
-        let writer = scope.spawn(move || {
-            let _done = Done(finished);
-            match (stdin, input) {
-                (Some(mut pipe), Some(bytes)) => pipe.write_all(bytes),
-                _ => Ok(()),
-            }
-        });
-        let (status, cancelled) =
-            wait_for_command(&mut child, transfer, finished).map_err(io_error)?;
-        let stdout = stdout.join().expect("stdout reader").map_err(io_error)?;
-        let stderr = stderr.join().expect("stderr reader").map_err(io_error)?;
-        let written = writer.join().expect("stdin writer");
-        if cancelled {
-            return Err("transferCancelled".into());
-        }
-        if !status.success() && !status.code().is_some_and(|code| accepted.contains(&code)) {
-            let message = String::from_utf8_lossy(&stderr.bytes).trim().to_owned();
-            let message = if message.is_empty() {
-                String::from_utf8_lossy(&stdout.bytes).trim().to_owned()
-            } else {
-                message
-            };
-            return Err(if authentication_required(&message) {
-                // Authentication output can include credential-bearing URLs.
-                // The UI recovers through the existing credential helper dialog.
-                "authenticationRequired".into()
-            } else if message.is_empty() {
-                GitError::new("gitExited", status)
-            } else {
-                GitError::new("gitOutput", message)
-            });
-        }
-        written.map_err(io_error)?;
-        Ok(stdout)
-    })
+    }
+    written.map_err(io_error)?;
+    Ok(stdout)
 }
 
-fn wait_for_command(
+// Git exit and pipe EOF wake their blocking waiters directly. Keep cancellation
+// available until descendants have closed all pipes.
+pub(super) fn supervise<T>(
     child: &mut Child,
-    transfer: Option<&Transfer<'_>>,
-    finished: &AtomicUsize,
-) -> io::Result<(ExitStatus, bool)> {
-    let Some(transfer) = transfer else {
-        return child.wait().map(|status| (status, false));
+    cancelled: Option<&Cancellation>,
+    run: impl FnOnce(&mut Child) -> Result<T>,
+) -> Result<(ExitStatus, T)> {
+    let wait = |child: &mut Child| {
+        child
+            .wait()
+            .map_err(|error| GitError::new("gitIoFailed", error))
     };
-    let mut exited = None;
-    loop {
-        if exited.is_none() {
-            exited = child.try_wait()?;
-        }
-        if let Some(status) = exited {
-            // Descendants can keep pipes open after Git exits. Continue accepting
-            // cancellation until all readers and the input writer have finished.
-            if finished.load(Ordering::Acquire) == 3 {
-                return Ok((status, false));
+    let Some(cancelled) = cancelled else {
+        let result = run(child);
+        return Ok((wait(child)?, result?));
+    };
+    let pid = child.id();
+    #[cfg(windows)]
+    let handle = std::os::windows::io::AsRawHandle::as_raw_handle(child) as usize;
+    thread::scope(|scope| {
+        let (sender, wake) = mpsc::channel();
+        let finished = Arc::new(sender);
+        cancelled.wake_on_cancel(&finished);
+        let monitor = scope.spawn(move || {
+            if wake.recv().is_err() {
+                return false;
             }
-        }
-        if transfer.cancelled.load(Ordering::Relaxed) {
             #[cfg(unix)]
             {
-                // Git and its transport share a dedicated process group.
-                unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGTERM) };
-                thread::sleep(Duration::from_millis(250));
-                unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
+                unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGTERM) };
+                thread::sleep(std::time::Duration::from_millis(250));
+                unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
             }
             #[cfg(windows)]
             {
                 use std::os::windows::process::CommandExt;
                 let _ = Command::new("taskkill")
                     .creation_flags(0x08000000)
-                    .args(["/PID", &child.id().to_string(), "/T", "/F"])
+                    .args(["/PID", &pid.to_string(), "/T", "/F"])
                     .output();
-                let _ = child.kill();
+                // Same direct-process fallback as Child::kill. The scoped
+                // monitor finishes before the owning Child can be dropped.
+                #[link(name = "kernel32")]
+                unsafe extern "system" {
+                    fn TerminateProcess(process: *mut std::ffi::c_void, code: u32) -> i32;
+                }
+                unsafe { TerminateProcess(handle as *mut _, 1) };
             }
-            #[cfg(not(any(unix, windows)))]
-            let _ = child.kill();
-            return child.wait().map(|status| (status, true));
+            true
+        });
+        let result = run(child);
+        // On Unix keep the group leader's PID reserved until the monitor has
+        // finished signalling its group, even if descendants outlive Git.
+        #[cfg(unix)]
+        let exited = wait_without_reaping(pid);
+        #[cfg(windows)]
+        let status = wait(child);
+        drop(finished);
+        let interrupted = monitor.join().expect("cancellation monitor");
+        #[cfg(unix)]
+        let status = wait(child);
+        if interrupted {
+            Err("transferCancelled".into())
+        } else {
+            #[cfg(unix)]
+            exited.map_err(|error| GitError::new("gitIoFailed", error))?;
+            Ok((status?, result?))
         }
-        thread::sleep(Duration::from_millis(80));
+    })
+}
+
+#[cfg(unix)]
+pub(super) fn wait_without_reaping(pid: u32) -> io::Result<()> {
+    let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::uninit();
+    loop {
+        // waitid writes the signal information. Only the return code is needed.
+        if unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid,
+                info.as_mut_ptr(),
+                libc::WEXITED | libc::WNOWAIT,
+            )
+        } == 0
+        {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
     }
+}
+
+pub fn operation_cancellation() -> Option<Arc<Cancellation>> {
+    OPERATION.with(|slot| slot.borrow().as_ref().map(|op| op.cancelled.clone()))
 }
 
 fn read_progress(mut input: impl Read, report: &dyn Fn(u8)) -> io::Result<Output> {

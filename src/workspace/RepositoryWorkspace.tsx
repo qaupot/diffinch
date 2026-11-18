@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useId, useRef, useState } from "react";
 import { version as appVersion } from "../../package.json";
 import BranchSidebar from "../BranchSidebar";
 import ConflictView from "../ConflictView";
+import ContextMenuRow from "../ContextMenuRow";
 import DiffView from "../DiffView";
 import ExternalTools from "../dialogs/ExternalTools";
 import { readEditor } from "../lib/external-tools";
@@ -10,7 +11,6 @@ import HistoryGraph, { type CommitCommand } from "../HistoryGraph";
 import Notice from "../Notice";
 import PaneDivider, { type PaneAxis } from "../PaneDivider";
 import PopupMenu from "../PopupMenu";
-import ReferenceRow from "../ReferenceRow";
 import ReferenceSidebar from "../ReferenceSidebar";
 import RepositoryNavigation from "../RepositoryNavigation";
 import SidebarDivider from "../SidebarDivider";
@@ -46,6 +46,7 @@ import { branchRef } from "../lib/branches";
 import { commitAuthor } from "../lib/commits";
 import {
   basename,
+  canDiscard,
   dirname,
   git,
   historyLimit,
@@ -179,6 +180,7 @@ export default function RepositoryWorkspace({
     graphRepo,
     view,
     setView,
+    navigation,
     viewRef,
     workspaceSelection,
     setSelection,
@@ -244,10 +246,11 @@ export default function RepositoryWorkspace({
 
   async function showAllBranches() {
     if (restoring || inFlight.current) return;
+    const visit = navigation.current;
     const result = hiddenBranches.length
       ? await updateBranchVisibility([])
       : { snapshot: graphRepo };
-    if (!result) return;
+    if (!result || visit !== navigation.current) return;
     navigate("history");
     setSelection((current) => chooseSelection(result.snapshot, "history", current));
     setScrollRequest((request) => request + 1);
@@ -263,15 +266,14 @@ export default function RepositoryWorkspace({
     branch?: Branch;
   }) {
     if (inFlight.current) return;
-    let snapshot = graphRepo;
-    let hidden = hiddenBranches;
+    let snapshot = repo.path ? repo : graphRepo;
     const target =
       targetBranch ?? (label === "HEAD" ? repo.branches.find((item) => item.current) : undefined);
-    if (target && hidden.includes(branchRef(target))) {
+    if (target && hiddenBranches.includes(branchRef(target))) {
+      const visit = navigation.current;
       const revealed = await changeBranchVisibility([target], true);
-      if (!revealed) return;
+      if (!revealed || visit !== navigation.current) return;
       snapshot = revealed.snapshot;
-      hidden = revealed.hidden;
     }
     navigate("history");
     if (
@@ -279,7 +281,7 @@ export default function RepositoryWorkspace({
       snapshot.hasOlderCommits &&
       historyDepth.current < historyLimit
     ) {
-      const extended = await extendHistory(historyLimit, hidden);
+      const extended = await extendHistory(historyLimit, snapshot, id);
       if (!extended || viewRef.current !== "history") return;
       snapshot = extended;
     }
@@ -292,7 +294,6 @@ export default function RepositoryWorkspace({
   }
 
   function navigate(next: View) {
-    viewRef.current = next;
     setView(next);
     setQuery("");
     setSearchVisible(false);
@@ -1078,6 +1079,7 @@ export default function RepositoryWorkspace({
                       <FileSection
                         id={`${changesId}-unstaged`}
                         kind="unstaged"
+                        onDiscard={active ? confirmDiscard : undefined}
                         files={inWorktree}
                         expanded={groups.unstaged}
                         onToggle={() =>
@@ -1131,11 +1133,9 @@ export default function RepositoryWorkspace({
                     discard={
                       <>
                         {file &&
-                          !file.conflict &&
-                          !file.submodule &&
+                          canDiscard(file) &&
                           selection?.kind === "file" &&
-                          !selection.staged &&
-                          file.worktree !== "?" && (
+                          !selection.staged && (
                             <button
                               type="button"
                               className="text-button"
@@ -1404,12 +1404,12 @@ export default function RepositoryWorkspace({
                           <span className="group-count">{items.length}</span>
                         </header>
                         {items.map((item) => (
-                          <ReferenceRow
+                          <ContextMenuRow
                             className="detail-row branch-detail-row"
                             key={item.name}
                             disabled={busy}
-                            deleteLabel={t("deleteNamed", { name: item.name })}
-                            onDelete={!item.current ? () => deleteBranch(item) : undefined}
+                            actionLabel={t("deleteNamed", { name: item.name })}
+                            onAction={!item.current ? () => deleteBranch(item) : undefined}
                           >
                             <span className="file-tile">
                               <Icon size={17} />
@@ -1461,7 +1461,7 @@ export default function RepositoryWorkspace({
                                 </>
                               )}
                             </div>
-                          </ReferenceRow>
+                          </ContextMenuRow>
                         ))}
                         {!items.length && (
                           <p className="empty-list">
@@ -1476,12 +1476,12 @@ export default function RepositoryWorkspace({
               {view === "stashes" && (
                 <div className="details-list">
                   {repo.stashes.map((item) => (
-                    <ReferenceRow
+                    <ContextMenuRow
                       className="detail-row"
                       key={`${item.id}:${item.tip}`}
                       disabled={busy}
-                      deleteLabel={t("dropNamedStash", { name: item.id })}
-                      onDelete={() => dropStash(item)}
+                      actionLabel={t("dropNamedStash", { name: item.id })}
+                      onAction={() => dropStash(item)}
                     >
                       <span className="file-tile">
                         <Archive size={17} />
@@ -1512,7 +1512,7 @@ export default function RepositoryWorkspace({
                       >
                         {t("pop")}
                       </button>
-                    </ReferenceRow>
+                    </ContextMenuRow>
                   ))}
                   {!repo.stashes.length && <p className="empty-list">{t("noStashes")}</p>}
                 </div>
@@ -1520,12 +1520,12 @@ export default function RepositoryWorkspace({
               {view === "tags" && (
                 <div className="details-list">
                   {repo.tags.map(({ name, tip }) => (
-                    <ReferenceRow
+                    <ContextMenuRow
                       className="detail-row"
                       key={`${name}:${tip}`}
                       disabled={busy}
-                      deleteLabel={t("deleteNamedTag", { name })}
-                      onDelete={() => deleteTag(name)}
+                      actionLabel={t("deleteNamedTag", { name })}
+                      onAction={() => deleteTag(name)}
                     >
                       <span className="file-tile">
                         <Tag size={17} />
@@ -1541,7 +1541,7 @@ export default function RepositoryWorkspace({
                       >
                         <Crosshair size={16} />
                       </button>
-                    </ReferenceRow>
+                    </ContextMenuRow>
                   ))}
                   {!repo.tags.length && <p className="empty-list">{t("noTags")}</p>}
                 </div>

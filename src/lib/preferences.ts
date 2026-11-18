@@ -17,7 +17,12 @@ const keys = new Set([
   "diffinch.current",
   "diffinch.recent",
 ]);
-const prefixes = ["diffinch.branches:", "diffinch.branchFolders:", "diffinch.repositoryMenu:"];
+const prefixes = [
+  "diffinch.branches:",
+  "diffinch.branchFolders:",
+  "diffinch.referenceSections:",
+  "diffinch.repositoryMenu:",
+];
 const cache = new Map<string, string>();
 const pending = new Map<string, string | null>();
 const listeners = new Set<() => void>();

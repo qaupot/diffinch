@@ -34,7 +34,13 @@ it("opens a blame commit through its initial search query", async () => {
     />,
   );
   await act(() => vi.advanceTimersByTimeAsync(300));
-  expect(git.searchCommits).toHaveBeenCalledWith(snapshot().path, commit.id, "all", false);
+  expect(git.searchCommits).toHaveBeenCalledWith(
+    snapshot().path,
+    commit.id,
+    "all",
+    false,
+    expect.any(AbortSignal),
+  );
   expect(onSelect).toHaveBeenLastCalledWith(commit);
 });
 
@@ -105,11 +111,17 @@ it("debounces rapid typing and always searches all fields", async () => {
   await act(() => vi.advanceTimersByTimeAsync(249));
   expect(search).not.toHaveBeenCalled();
   await act(() => vi.advanceTimersByTimeAsync(1));
-  expect(search).toHaveBeenCalledExactlyOnceWith("/repository", "toolbar", "all", false);
+  expect(search).toHaveBeenCalledExactlyOnceWith(
+    "/repository",
+    "toolbar",
+    "all",
+    false,
+    expect.any(AbortSignal),
+  );
   expect(screen.getByRole("status").textContent).toBe("1 match");
 });
 
-it("waits for an active scan, skips superseded queries, and ignores stale results", async () => {
+it("cancels an active scan and starts the replacement before stale results arrive", async () => {
   const first = deferred<CommitSearch>();
   const latest = deferred<CommitSearch>();
   const search = vi
@@ -118,12 +130,19 @@ it("waits for an active scan, skips superseded queries, and ignores stale result
     .mockReturnValueOnce(latest.promise);
   const { input, props } = setup();
   await type(input, "first");
-  await type(input, "skipped");
+  fireEvent.change(input, { target: { value: "skipped" } });
+  expect(search.mock.calls[0][4].aborted).toBe(true);
   await type(input, "latest");
-  expect(search).toHaveBeenCalledTimes(1);
-  await act(async () => first.resolve(matches));
   expect(search).toHaveBeenCalledTimes(2);
-  expect(search).toHaveBeenLastCalledWith("/repository", "latest", "all", false);
+  expect(search.mock.calls[1][4].aborted).toBe(false);
+  await act(async () => first.resolve(matches));
+  expect(search).toHaveBeenLastCalledWith(
+    "/repository",
+    "latest",
+    "all",
+    false,
+    expect.any(AbortSignal),
+  );
   expect(props.onSelect).not.toHaveBeenCalledWith(commit);
   expect(screen.queryByText(commit.subject)).toBeNull();
   expect(screen.getByRole("status").textContent).toBe("Searching…");
@@ -163,7 +182,13 @@ it("waits for text composition to finish before searching", async () => {
   expect(search).not.toHaveBeenCalled();
   fireEvent.compositionEnd(input);
   await act(() => vi.advanceTimersByTimeAsync(250));
-  expect(search).toHaveBeenCalledExactlyOnceWith("/repository", "검색", "all", false);
+  expect(search).toHaveBeenCalledExactlyOnceWith(
+    "/repository",
+    "검색",
+    "all",
+    false,
+    expect.any(AbortSignal),
+  );
 });
 
 it("discards results after leaving Find", async () => {

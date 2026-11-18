@@ -3,6 +3,13 @@ import type { RepositoryToolAction } from "./repository-tools";
 
 export type GitError = { key: MessageKey; detail?: string };
 
+export type CommitSearchRequest = {
+  id: string;
+  query: string;
+  field: SearchField;
+  caseSensitive: boolean;
+};
+
 export type GitActionRequest = { id: string; action: Action };
 export type EditorCommand = { program: string; args: string[] };
 export type FileRevision = Commit & { path: string; previousPath: string | null; deleted: boolean };
@@ -142,7 +149,10 @@ export type Settings = {
   signingFormat: string;
   signingKey: string;
 };
+export type HistoryPage = { commits: Commit[]; nextCommit: string | null };
+export type HistoryPageRequest = { roots: string[]; offset: number; limit: number };
 export type Snapshot = {
+  historyCursor: { roots: string[]; next: string } | null;
   path: string;
   name: string;
   status: {

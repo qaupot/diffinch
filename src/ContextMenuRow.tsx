@@ -9,26 +9,25 @@ import {
 import { createPortal } from "react-dom";
 import { X } from "./icons";
 
-/** A reference row with deletion available through its context menu. */
-export default function ReferenceRow({
+export default function ContextMenuRow({
   children,
   className,
   style,
   disabled,
-  deleteLabel,
-  onDelete,
+  actionLabel,
+  onAction,
 }: {
   children: ReactNode;
   className: string;
   style?: CSSProperties;
   disabled: boolean;
-  deleteLabel: string;
-  onDelete?: () => void;
+  actionLabel: string;
+  onAction?: () => void;
 }) {
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
   const panel = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLElement | null>(null);
-  const canDelete = !!onDelete;
+  const available = !!onAction && !disabled;
 
   function close(restore = false) {
     setPosition(null);
@@ -39,7 +38,7 @@ export default function ReferenceRow({
 
   useLayoutEffect(() => {
     if (!position) return;
-    if (disabled || !canDelete) {
+    if (!available) {
       closeFromEffect();
       return;
     }
@@ -71,10 +70,10 @@ export default function ReferenceRow({
       document.removeEventListener("pointerdown", outside);
       document.removeEventListener("focusin", outside);
     };
-  }, [position, disabled, canDelete]);
+  }, [position, available]);
 
   function open(row: HTMLElement, target: EventTarget, point?: { x: number; y: number }) {
-    if (disabled || !canDelete) return;
+    if (!available) return;
     trigger.current =
       (target as HTMLElement).closest<HTMLElement>("button") ?? row.querySelector("button");
     const rect = (trigger.current ?? row).getBoundingClientRect();
@@ -104,13 +103,13 @@ export default function ReferenceRow({
       {children}
       {position &&
         !disabled &&
-        onDelete &&
+        onAction &&
         createPortal(
           <div
             ref={panel}
-            className="dropdown popup-menu reference-context-menu"
+            className="dropdown popup-menu row-context-menu"
             role="menu"
-            aria-label={deleteLabel}
+            aria-label={actionLabel}
             onContextMenu={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -133,11 +132,11 @@ export default function ReferenceRow({
               onClick={(event) => {
                 event.stopPropagation();
                 close(true);
-                onDelete();
+                onAction();
               }}
             >
               <X size={15} />
-              {deleteLabel}
+              {actionLabel}
             </button>
           </div>,
           document.body,

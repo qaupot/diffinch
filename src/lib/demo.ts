@@ -175,6 +175,7 @@ export const demo: Snapshot = {
       date: "2026-11-09T14:29:00+09:00",
     },
   ],
+  historyCursor: null,
   hasOlderCommits: false,
   worktrees: [],
   stashes: [

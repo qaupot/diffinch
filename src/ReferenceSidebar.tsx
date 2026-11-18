@@ -1,8 +1,8 @@
-import { useState } from "react";
-import ReferenceRow from "./ReferenceRow";
+import ContextMenuRow from "./ContextMenuRow";
 import { useTranslation } from "./i18n";
 import { Archive, ChevronDown, ChevronRight, Plus, Tag } from "./icons";
 import type { Snapshot, Stash } from "./lib/git";
+import { useSidebarExpansion } from "./useSidebarExpansion";
 
 export default function ReferenceSidebar({
   repo,
@@ -20,11 +20,15 @@ export default function ReferenceSidebar({
   onDropStash: (stash: Stash) => void;
 }) {
   const { t } = useTranslation();
-  const [collapsed, setCollapsed] = useState({ tags: false, stashes: false });
+  const { isExpanded, toggle } = useSidebarExpansion(
+    `diffinch.referenceSections:${repo.path || "example"}`,
+  );
   return (
     <>
       {(["tags", "stashes"] as const).map((kind) => {
         const tags = kind === "tags";
+        const expanded = isExpanded(kind);
+        const count = repo[kind].length;
         const Icon = tags ? Tag : Archive;
         const createLabel = t(tags ? "newTag" : "stashChanges");
         const canCreate =
@@ -33,33 +37,34 @@ export default function ReferenceSidebar({
             (!repo.operation &&
               repo.status.files.length > 0 &&
               !repo.status.files.some((file) => file.conflict)));
-        const items = tags
-          ? repo.tags.map(({ name, tip }) => ({
-              id: name,
-              tip,
-              title: name,
-              deleteLabel: t("deleteNamedTag", { name }),
-              onDelete: () => onDeleteTag(name),
-            }))
-          : repo.stashes.map((stash) => ({
-              id: stash.id,
-              tip: stash.tip,
-              title: `${stash.id}: ${stash.subject}`,
-              deleteLabel: t("dropNamedStash", { name: stash.id }),
-              onDelete: () => onDropStash(stash),
-            }));
+        const items = !expanded
+          ? []
+          : tags
+            ? repo.tags.map(({ name, tip }) => ({
+                id: name,
+                tip,
+                title: name,
+                deleteLabel: t("deleteNamedTag", { name }),
+                onDelete: () => onDeleteTag(name),
+              }))
+            : repo.stashes.map((stash) => ({
+                id: stash.id,
+                tip: stash.tip,
+                title: `${stash.id}: ${stash.subject}`,
+                deleteLabel: t("dropNamedStash", { name: stash.id }),
+                onDelete: () => onDropStash(stash),
+              }));
         return (
           <section className="reference-sidebar" key={kind} aria-label={t(kind)}>
             <div className="section-line">
               <button
                 className="branch-tree-select reference-heading"
-                aria-expanded={!collapsed[kind]}
-                onClick={() => setCollapsed((current) => ({ ...current, [kind]: !current[kind] }))}
+                aria-expanded={expanded}
+                onClick={() => toggle(kind)}
               >
-                {collapsed[kind] ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                 <Icon size={14} />
-                <span>{t(kind)}</span>
-                <span className="branch-folder-count">{items.length}</span>
+                <span>{t(kind)}</span> <span className="branch-folder-count">{count}</span>
               </button>
               <button
                 className="icon-button"
@@ -71,15 +76,15 @@ export default function ReferenceSidebar({
                 <Plus size={15} />
               </button>
             </div>
-            {!collapsed[kind] && (
+            {expanded && (
               <div>
                 {items.map((item) => (
-                  <ReferenceRow
+                  <ContextMenuRow
                     className="branch-tree-row"
                     key={`${item.id}:${item.tip}`}
                     disabled={busy}
-                    deleteLabel={item.deleteLabel}
-                    onDelete={item.onDelete}
+                    actionLabel={item.deleteLabel}
+                    onAction={item.onDelete}
                   >
                     <button
                       className="branch-tree-select"
@@ -91,7 +96,7 @@ export default function ReferenceSidebar({
                       <Icon size={14} />
                       <span className="truncate">{item.title}</span>
                     </button>
-                  </ReferenceRow>
+                  </ContextMenuRow>
                 ))}
                 {!items.length && (
                   <p className="branch-sidebar-empty">{t(tags ? "noTags" : "noStashes")}</p>

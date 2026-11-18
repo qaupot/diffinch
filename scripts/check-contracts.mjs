@@ -32,8 +32,15 @@ try {
   const accountRequests = requests.filter(({ command }) => command === "credential_account");
   const inspections = requests.filter(({ command }) => command === "inspect_file");
   const operations = requests.filter(({ command }) => command === "git_action");
+  const searches = requests.filter(({ command }) => command === "search_commits");
+  const pages = requests.filter(({ command }) => command === "history_page");
   if (
-    actions.length + accountRequests.length + inspections.length + operations.length !==
+    searches.length +
+      pages.length +
+      actions.length +
+      accountRequests.length +
+      inspections.length +
+      operations.length !==
     requests.length
   ) {
     throw new Error("Unknown IPC request fixture");
@@ -51,6 +58,8 @@ try {
     const accountRequests = ${JSON.stringify(accountRequests.map(({ request }) => request))} satisfies Git.CredentialAccountRequest[];
     const inspections = ${JSON.stringify(inspections.map(({ request }) => request))} satisfies Git.FileInspectionRequest[];
     const inspectionKinds = ${JSON.stringify(Object.fromEntries(inspections.map(({ request }) => [request.kind, true])))} satisfies Record<Git.FileInspectionRequest["kind"], true>;
+    const searches = ${JSON.stringify(searches.map(({ request }) => request))} satisfies Git.CommitSearchRequest[];
+    const pages = ${JSON.stringify(pages.map(({ request }) => request))} satisfies Git.HistoryPageRequest[];
     const operations = ${JSON.stringify(operations.map(({ request }) => request))} satisfies Git.GitActionRequest[];
     const kinds = ${JSON.stringify(kinds)} satisfies Record<Git.Action["kind"], true>;
     const toolKinds = ${JSON.stringify(toolKinds)} satisfies Record<Tools.RepositoryToolAction["kind"], true>;

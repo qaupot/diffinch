@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { git, type Action, type RemoteRefs, type Snapshot } from "../lib/git";
 import { deferred, fileChange, snapshot } from "../test/fixtures";
@@ -86,6 +86,165 @@ async function setup(repo: Snapshot = repository(), restoring = false) {
   );
   return { repo, action };
 }
+
+function branchGroup(scope: "Local" | "Remote", expanded: boolean) {
+  return within(screen.getByRole("region", { name: `${scope} branches` })).getByRole("button", {
+    name: new RegExp(`^${scope}`),
+    expanded,
+  });
+}
+
+function expand(name: string | RegExp) {
+  fireEvent.click(screen.getByRole("button", { name, expanded: false }));
+}
+
+it("opens the branch sections and folds each slash-delimited path independently", async () => {
+  const repo = repository();
+  repo.branches.push({ ...repo.branches[1], name: "feature/ui/buttons" });
+  repo.branches.push({ ...repo.branches[2], name: "origin/feature/sidebar" });
+  await setup(repo);
+  expect(branchGroup("Local", true)).toBeTruthy();
+  expect(branchGroup("Remote", true)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Show main in the commit graph" })).toBeTruthy();
+  expect(
+    screen.queryByRole("button", { name: "Show feature/sidebar in the commit graph" }),
+  ).toBeNull();
+  expand("Branch folder feature");
+  expand("Branch folder feature/ui");
+  expect(
+    screen.getByRole("button", { name: "Show feature/ui/buttons in the commit graph" }),
+  ).toBeTruthy();
+  expand("Remote origin");
+  expect(
+    screen.getByRole("button", { name: "Branch folder origin/feature", expanded: false }),
+  ).toBeTruthy();
+  cleanup();
+  repo.branches.push({ ...repo.branches[1], name: "feature/new/work" });
+  await setup(repo);
+  expect(
+    screen.getByRole("button", { name: "Show feature/ui/buttons in the commit graph" }),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: "Branch folder feature/new", expanded: false }),
+  ).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Remote origin", expanded: true })).toBeTruthy();
+  cleanup();
+  await setup({ ...repo, path: "/other" });
+  expect(
+    screen.getByRole("button", { name: "Branch folder feature", expanded: false }),
+  ).toBeTruthy();
+});
+
+it("keeps previously saved collapsed sections when reading the older branch preference", async () => {
+  const repo = repository();
+  localStorage.setItem(
+    `diffinch.branchFolders:${repo.path}`,
+    JSON.stringify(["remote", "local/feature"]),
+  );
+  await setup(repo);
+  expect(branchGroup("Local", true)).toBeTruthy();
+  expect(branchGroup("Remote", false)).toBeTruthy();
+  expand("Branch folder feature");
+  cleanup();
+  await setup(repo);
+  expect(branchGroup("Remote", false)).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: "Branch folder feature", expanded: true }),
+  ).toBeTruthy();
+});
+
+it("starts Tags and Stashes folded and remembers their separate choices per repository", async () => {
+  const { repo } = await setup();
+  expect(screen.getByRole("button", { name: "Tags 1", expanded: false })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Stashes 1", expanded: false })).toBeTruthy();
+  expand("Tags 1");
+  expect(screen.getByRole("button", { name: "Show v1.0 in the commit graph" })).toBeTruthy();
+  cleanup();
+  await setup(repo);
+  expect(screen.getByRole("button", { name: "Tags 1", expanded: true })).toBeTruthy();
+  expand("Stashes 1");
+  fireEvent.click(screen.getByRole("button", { name: "Tags 1", expanded: true }));
+  cleanup();
+  await setup(repo);
+  expect(screen.getByRole("button", { name: "Tags 1", expanded: false })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Stashes 1", expanded: true })).toBeTruthy();
+  cleanup();
+  await setup({ ...repo, path: "/other" });
+  expect(screen.getByRole("button", { name: "Stashes 1", expanded: false })).toBeTruthy();
+});
+
+it("confirms discard for the right-clicked file while another file is selected", async () => {
+  const repo = repository();
+  const target = fileChange("src/target", "M", "M");
+  repo.status.files.push(target);
+  const { action } = await setup(repo);
+  const plan = { id: target.id, token: "reviewed-state" };
+  const prepare = vi.spyOn(git, "discardPlan").mockResolvedValue(plan);
+  const unstaged = within(screen.getByRole("region", { name: "Unstaged files" }));
+  const selected = unstaged.getByTitle("notes.txt");
+  const row = unstaged.getByTitle(target.path);
+  const menuLabel = "Discard changes to src/target.txt…";
+
+  fireEvent.contextMenu(row, { clientX: 180, clientY: 300 });
+  expect(selected.getAttribute("aria-pressed")).toBe("true");
+  expect(prepare).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("menuitem", { name: menuLabel }));
+  const dialog = within(await screen.findByRole("dialog"));
+  expect(prepare).toHaveBeenCalledWith(repo.path, target.id);
+  expect(dialog.getByText(/working copy of src\/target\.txt/)).toBeTruthy();
+  expect(action).not.toHaveBeenCalled();
+  fireEvent.click(dialog.getByRole("button", { name: "Cancel" }));
+  expect(action).not.toHaveBeenCalled();
+
+  fireEvent.keyDown(row, { key: "F10", shiftKey: true });
+  const item = screen.getByRole("menuitem", { name: menuLabel });
+  expect(document.activeElement).toBe(item);
+  fireEvent.keyDown(item, { key: "Escape" });
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(document.activeElement).toBe(row);
+  fireEvent.keyDown(row, { key: "ContextMenu" });
+  fireEvent.click(screen.getByRole("menuitem", { name: menuLabel }));
+  fireEvent.click(
+    within(await screen.findByRole("dialog")).getByRole("button", { name: "Discard changes" }),
+  );
+  await waitFor(() =>
+    expect(action).toHaveBeenCalledWith(
+      repo.path,
+      { kind: "discard", ...plan },
+      expect.any(String),
+      expect.any(Function),
+    ),
+  );
+});
+
+it("offers no discard menu on staged, untracked, conflicted, or submodule rows", async () => {
+  const repo = repository();
+  repo.status.files = [
+    fileChange("partial", "M", "M"),
+    fileChange("new", ".", "?"),
+    { ...fileChange("conflict", "U", "U"), conflict: true },
+    { ...fileChange("module"), submodule: true },
+  ];
+  await setup(repo);
+  const staged = within(screen.getByRole("region", { name: "Staged files" }));
+  const unstaged = within(screen.getByRole("region", { name: "Unstaged files" }));
+  for (const row of [
+    staged.getByTitle("partial.txt"),
+    unstaged.getByTitle("new.txt"),
+    unstaged.getByTitle("conflict.txt"),
+    unstaged.getByTitle("module.txt"),
+  ]) {
+    fireEvent.contextMenu(row);
+    expect(screen.queryByRole("menu")).toBeNull();
+  }
+});
+
+it("blocks the file discard menu while the repository is busy", async () => {
+  await setup(repository(), true);
+  const unstaged = within(screen.getByRole("region", { name: "Unstaged files" }));
+  fireEvent.contextMenu(unstaged.getByTitle("notes.txt"));
+  expect(screen.queryByRole("menu")).toBeNull();
+});
 
 it.each(["loaded message", "existing draft"])(
   "does not retarget an amend %s when HEAD refreshes before confirmation",
@@ -444,6 +603,7 @@ it.each(deletions)(
   "keeps %s deletion out of the inline sidebar and detail actions",
   async (section, _name, remove) => {
     await setup();
+    expand(section === "Branches" ? "Branch folder feature" : `${section} 1`);
     const region = within(screen.getByRole("region", { name: section }));
     expect(region.queryByRole("button", { name: remove })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: section }));
@@ -479,6 +639,7 @@ it.each(deletions)(
   "confirms %s deletion from the sidebar context menu without navigating",
   async (section, name, remove, confirm, expected) => {
     const { repo, action } = await setup();
+    expand(section === "Branches" ? "Branch folder feature" : `${section} 1`);
     const region = within(screen.getByRole("region", { name: section }));
     const label = `Show ${name} in the commit graph`;
     const target = region.getByRole("button", { name: label });
@@ -539,6 +700,7 @@ it.each([{ key: "ContextMenu" }, { key: "F10", shiftKey: true }])(
   "opens a reference context menu with $key and restores focus on Escape",
   async (keys) => {
     const { action } = await setup();
+    expand("Tags 1");
     const region = within(screen.getByRole("region", { name: "Tags" }));
     const target = region.getByRole("button", { name: "Show v1.0 in the commit graph" });
     target.focus();
@@ -554,6 +716,8 @@ it.each([{ key: "ContextMenu" }, { key: "F10", shiftKey: true }])(
 
 it("dismisses reference menus and retargets them when another row is right-clicked", async () => {
   const { action } = await setup();
+  expand("Tags 1");
+  expand("Stashes 1");
   const tag = within(screen.getByRole("region", { name: "Tags" })).getByRole("button", {
     name: "Show v1.0 in the commit graph",
   });
@@ -577,6 +741,10 @@ it.each([false, true])(
   "protects the current branch and blocks branch menus while busy (busy: %s)",
   async (busy) => {
     const { action } = await setup(repository(), busy);
+    if (busy) {
+      expand("Branch folder feature");
+      expand("Remote origin");
+    }
     const region = within(screen.getByRole("region", { name: "Branches" }));
     for (const name of ["main", ...(busy ? ["feature/sidebar", "origin/main"] : [])]) {
       fireEvent.contextMenu(
@@ -590,6 +758,7 @@ it.each([false, true])(
 
 it.each(["Tags", "Stashes"])("prevents %s context actions while busy", async (section) => {
   const { action } = await setup(repository(), true);
+  expand(`${section} 1`);
   const region = within(screen.getByRole("region", { name: section }));
   fireEvent.contextMenu(region.getByRole("button", { name: /^Show .* in the commit graph$/ }));
   expect(screen.queryByRole("menu")).toBeNull();
@@ -618,6 +787,7 @@ it.each(["sidebar", "details", "history"])(
       fireEvent.click(screen.getByRole("button", { name: "Delete origin/main" }));
     } else {
       if (surface === "details") fireEvent.click(screen.getByRole("button", { name: "Branches" }));
+      else expand("Remote origin");
       const targets = screen.getAllByRole("button", {
         name: "Show origin/main in the commit graph",
       });
@@ -663,6 +833,8 @@ it("matches remote names containing slashes and preserves the branch path", asyn
   repo.remotes.push({ name: "origin/team", url: "https://example.invalid/team.git" });
   repo.branches.push({ ...repo.branches[2], name: "origin/team/feature/sidebar" });
   const { action } = await setup(repo);
+  expand("Remote origin/team");
+  expand("Branch folder origin/team/feature");
   const load = vi.spyOn(git, "remoteRefs").mockResolvedValue({
     ...remoteRefs,
     refs: [{ name: "feature/sidebar", tip: "b".repeat(40) }],
@@ -688,6 +860,7 @@ it.each(["missing", "failed"])(
   "blocks remote branch deletion when loading is %s",
   async (state) => {
     const { action } = await setup();
+    expand("Remote origin");
     const load = vi.spyOn(git, "remoteRefs");
     if (state === "failed") load.mockRejectedValue({ key: "authenticationRequired" });
     else load.mockResolvedValue({ ...remoteRefs, refs: [{ name: "other", tip: "c".repeat(40) }] });
@@ -719,6 +892,7 @@ it.each(["missing", "failed"])(
 
 it("preserves a rejected stash deletion and prevents repeat actions while busy", async () => {
   const { action } = await setup();
+  expand("Stashes 1");
   const pending = deferred<never>();
   action.mockReturnValue(pending.promise);
   const region = within(screen.getByRole("region", { name: "Stashes" }));
