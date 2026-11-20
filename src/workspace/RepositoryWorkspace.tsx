@@ -43,7 +43,7 @@ import {
   X,
 } from "../icons";
 import { branchRef } from "../lib/branches";
-import { commitAuthor } from "../lib/commits";
+import { commitAuthor, splitCommitMessage } from "../lib/commits";
 import {
   basename,
   canDiscard,
@@ -334,9 +334,9 @@ export default function RepositoryWorkspace({
     setBusy(true);
     try {
       const message = await git.commitMessage(repo.path, target.head);
-      const [firstLine, ...rest] = message.split("\n");
-      setSummary((current) => current || firstLine);
-      setDescription((current) => current || rest.join("\n").trim());
+      const original = splitCommitMessage(message);
+      setSummary((current) => current || original.summary);
+      setDescription((current) => current || original.description);
     } catch (error) {
       setNotice({ message: errorMessage(error), error: true });
     } finally {
@@ -489,13 +489,19 @@ export default function RepositoryWorkspace({
       });
       return;
     }
-    if (command === "copy") {
+    if (command === "copySha" || command === "copyTitle") {
+      const copyTitle = command === "copyTitle";
       try {
-        await navigator.clipboard.writeText(item.id);
-        setNotice({ message: { key: "commitShaCopied" }, error: false });
+        await navigator.clipboard.writeText(copyTitle ? item.subject : item.id);
+        setNotice({
+          message: { key: copyTitle ? "commitTitleCopied" : "commitShaCopied" },
+          error: false,
+        });
       } catch {
         setNotice({
-          message: { key: "commitShaCopyFailed", values: { id: item.id } },
+          message: copyTitle
+            ? { key: "commitTitleCopyFailed", values: { title: item.subject } }
+            : { key: "commitShaCopyFailed", values: { id: item.id } },
           error: true,
         });
       }

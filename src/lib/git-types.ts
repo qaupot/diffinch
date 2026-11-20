@@ -297,4 +297,5 @@ export type Action =
       helper: CredentialHelper | null;
       token: string;
     }
-  | { kind: "saveSettings"; settings: Settings };
+  | { kind: "saveSettings"; settings: Settings }
+  | { kind: "configureMacPinentry" };

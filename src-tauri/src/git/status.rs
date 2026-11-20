@@ -400,7 +400,7 @@ fn parse_status(bytes: &[u8]) -> Result<Status> {
         }
         status.files.push(FileChange {
             id,
-            path: string(path),
+            path: string(path.strip_suffix(b"/").unwrap_or(path)),
             original_path: original.map(string),
             index,
             worktree,

@@ -15,3 +15,11 @@ Credentials are sent to your configured [Git credential helper](https://git-scm.
 **Forget credentials** asks the helper to remove credentials for the entered username after confirmation. Git normally shares credentials across repositories on the same HTTPS host, so saving or removing them can affect those repositories too; `credential.useHttpPath` controls path matching.
 
 In **Repository Settings**, choose OpenPGP, SSH, or X.509 and enter the key ID or path for that format. For SSH, use the path to a public key whose private key is available to the agent, or the path to a private key your signer can read. For OpenPGP or X.509, configure the signing program and its graphical pinentry separately if the key requires a passphrase. Repository Settings writes changed defaults to the local Git configuration.
+
+### GPG asks for a terminal when signing on macOS
+
+If a signed commit fails with `gpg: signing failed: Inappropriate ioctl for device`, GPG may be trying to read the passphrase in a terminal. In Diffinch, choose **Use pinentry-mac**. If the helper is missing, install it with `brew install pinentry-mac` and click the button again. This sets the passphrase dialog for your macOS account and reloads the GPG agent. Retry the commit with **Sign commit** checked and enter the passphrase in the GPG dialog.
+
+Diffinch looks for `gpgconf` in the same installation as Git’s OpenPGP signer. If you use a custom signing wrapper, configure the GnuPG home used by that wrapper manually.
+
+For manual setup, run `gpgconf --list-dirs homedir` from the GnuPG installation Git uses. In that directory, edit `gpg-agent.conf` and set `pinentry-program` to the full path to `pinentry-mac`. For Homebrew, find it with `command -v pinentry-mac`. Run `gpgconf --reload gpg-agent` from the same installation, then retry in Diffinch. This setup also works with older Git versions that only report `gpg failed to sign the data` when the passphrase prompt fails.

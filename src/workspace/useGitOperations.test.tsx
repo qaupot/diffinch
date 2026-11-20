@@ -13,6 +13,7 @@ import { useWorkspaceDialogs } from "./useWorkspaceDialogs";
 
 vi.mock("../lib/git", async (original) => ({
   ...(await original<typeof import("../lib/git")>()),
+  mac: true,
   git: {
     action: vi.fn(),
     snapshot: vi.fn(),
@@ -318,6 +319,35 @@ it("preserves the draft when a hook or signing operation rejects the commit", as
   expect(result.current.draft.description).toBe(commit.description);
   expect(result.current.notice?.error).toBe(true);
   expect(result.current.activity.busy).toBe(false);
+});
+
+it("offers macOS pinentry setup after a failed prompt and keeps the signed draft for retry", async () => {
+  vi.mocked(git.action).mockRejectedValueOnce({ key: "gpgNeedsPinentry" });
+  const { result } = setup();
+  act(() => {
+    result.current.draft.setSummary(commit.summary);
+    result.current.draft.setDescription(commit.description);
+    result.current.draft.setSign(true);
+  });
+  const signed = { ...commit, sign: true };
+  await act(() => result.current.operations.action(signed));
+  expect(result.current.dialogs.confirm?.action).toEqual({ kind: "configureMacPinentry" });
+  expect(git.action).toHaveBeenCalledTimes(1);
+
+  vi.mocked(git.action).mockRejectedValueOnce({ key: "macPinentryMissing" });
+  await act(() => result.current.operations.action(result.current.dialogs.confirm!.action, true));
+  expect(result.current.dialogs.modalError?.key).toBe("macPinentryMissing");
+  vi.mocked(git.action).mockResolvedValueOnce("macPinentryConfigured");
+  await act(() => result.current.operations.action(result.current.dialogs.confirm!.action, true));
+  expect(result.current.dialogs.modal).toBeNull();
+  expect(result.current.draft.summary).toBe(commit.summary);
+  expect(result.current.draft.description).toBe(commit.description);
+  expect(result.current.draft.sign).toBe(true);
+  expect(git.action).toHaveBeenCalledTimes(3);
+
+  vi.mocked(git.action).mockResolvedValueOnce("commitCreated");
+  await act(() => result.current.operations.action(signed));
+  expect(result.current.draft.summary).toBe("");
 });
 
 it("cancels a long commit, preserves its draft, and refreshes without retrying", async () => {

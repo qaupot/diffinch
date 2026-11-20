@@ -36,34 +36,24 @@ impl Repo {
 
     pub fn file_diff(&self, id: &str, staged: bool, options: DiffOptions) -> Result<Diff> {
         let (file, paths) = self.file(id)?;
-        let mut diff = self.diff_for_file(&file, &paths, staged, options)?;
         let mut budget = IMAGE_TOTAL_LIMIT;
-        if file.worktree == '?' {
-            diff.images
-                .extend(self.untracked_image(&paths[0], &mut budget));
-        } else {
-            let source = if staged {
-                ImageSource::Index
-            } else {
-                ImageSource::Worktree
-            };
-            let paths = if staged {
-                &paths
-            } else {
-                Self::working_paths(&file, &paths)
-            };
-            diff.images = self.image_previews(source, paths, &mut budget)?;
-        }
-        Ok(diff)
+        self.diff_for_file(&file, &paths, staged, options, &mut budget)
     }
 
-    pub(super) fn diff_for_file(
+    fn diff_for_file(
         &self,
         file: &FileChange,
         paths: &[OsString],
         staged: bool,
         options: DiffOptions,
+        budget: &mut usize,
     ) -> Result<Diff> {
+        // With --untracked-files=all Git reports embedded repositories as
+        // directories. A no-index diff would compare a child named "null".
+        if file.worktree == '?' && (staged || paths[0].as_encoded_bytes().ends_with(b"/")) {
+            return Ok(Diff::default());
+        }
+        let paths = Self::change_paths(file, paths, staged);
         let mut git = self.command();
         git.args([
             "--literal-pathspecs",
@@ -85,7 +75,7 @@ impl Repo {
             if staged {
                 git.arg("--cached").arg("--").args(paths);
             } else {
-                git.arg("--").args(Self::working_paths(file, paths));
+                git.arg("--").args(paths);
             }
         }
         let output = options.execute(git, if file.worktree == '?' { &[1] } else { &[] })?;
@@ -96,7 +86,18 @@ impl Repo {
             && paths.len() == 1
             && !options.ignore_whitespace
             && !self.is_lfs_path(&paths[0])?;
-        Ok(make_diff(output, eligible))
+        let mut diff = make_diff(output, eligible);
+        if file.worktree == '?' {
+            diff.images.extend(self.untracked_image(&paths[0], budget));
+        } else {
+            let source = if staged {
+                ImageSource::Index
+            } else {
+                ImageSource::Worktree
+            };
+            diff.images = self.image_previews(source, paths, budget)?;
+        }
+        Ok(diff)
     }
 
     #[cfg(test)]
@@ -139,8 +140,8 @@ impl Repo {
                 .filter(|file| file.worktree == '?')
             {
                 let paths = Self::file_paths(&file.id)?;
-                images.extend(self.untracked_image(&paths[0], &mut budget));
-                let diff = self.diff_for_file(file, &paths, false, options)?;
+                let diff = self.diff_for_file(file, &paths, false, options, &mut budget)?;
+                images.extend(diff.images);
                 let remaining = options.limit().saturating_sub(output.bytes.len());
                 let bytes = diff.text.as_bytes();
                 output

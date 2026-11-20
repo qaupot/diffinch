@@ -21,7 +21,7 @@ it("cancels stale reads and ignores their results when the file changes", async 
       progress(0);
       return second.promise;
     });
-  const { result, rerender } = renderHook(
+  const { result, rerender, unmount } = renderHook(
     ({ file }) =>
       useFileInspection<"history">("/repo", {
         kind: "history",
@@ -38,6 +38,8 @@ it("cancels stale reads and ignores their results when the file changes", async 
   await act(async () => first.resolve({ kind: "history", data: { commits: [], hasMore: true } }));
   expect(result.current.data?.hasMore).toBe(false);
   expect(result.current.pending).toBe(false);
+  unmount();
+  expect(git.cancelTransfer).toHaveBeenCalledTimes(1);
 });
 
 it("cancels after registration if a view was closed before the first progress event", async () => {
@@ -48,7 +50,10 @@ it("cancels after registration if a view was closed before the first progress ev
   );
   unmount();
   expect(git.cancelTransfer).not.toHaveBeenCalled();
-  act(() => inspect.mock.calls[0][3](0));
+  act(() => {
+    for (const percent of [0, 25, 50]) inspect.mock.calls[0][3](percent);
+  });
+  expect(git.cancelTransfer).toHaveBeenCalledTimes(1);
   expect(git.cancelTransfer).toHaveBeenCalledWith(inspect.mock.calls[0][2]);
   await act(async () => pending.reject({ key: "operationInterrupted" }));
 });

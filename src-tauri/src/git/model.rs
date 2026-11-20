@@ -262,7 +262,7 @@ pub(super) enum RebaseOperation {
     Drop,
 }
 
-#[derive(Serialize)]
+#[derive(Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Diff {
     pub(super) text: String,
@@ -446,6 +446,7 @@ pub enum Action {
     SaveSettings {
         settings: Settings,
     },
+    ConfigureMacPinentry,
     ConfigureCredentialHelper {
         remote: String,
         destination: String,

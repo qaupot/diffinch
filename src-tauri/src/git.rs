@@ -13,7 +13,10 @@ mod external_tools;
 mod file_history;
 mod images;
 mod model;
+#[cfg(target_os = "macos")]
+mod pinentry;
 mod process;
+mod push_hooks;
 mod rebase;
 mod refs;
 mod remotes;

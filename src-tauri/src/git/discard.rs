@@ -63,7 +63,7 @@ impl Repo {
         if file.conflict || file.submodule || matches!(file.worktree, '?' | '.') {
             return Err("invalidDiscard".into());
         }
-        let paths = Self::working_paths(&file, &paths).to_vec();
+        let paths = Self::change_paths(&file, &paths, false).to_vec();
         let index = self.run(
             ["--literal-pathspecs", "ls-files", "--stage", "-z", "--"]
                 .iter()

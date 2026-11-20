@@ -7,7 +7,7 @@ use std::{
     thread,
 };
 #[cfg(target_os = "macos")]
-use std::{env, path::PathBuf};
+use std::{env, ffi::OsString, path::PathBuf};
 
 #[derive(Default)]
 pub struct Cancellation {
@@ -132,17 +132,7 @@ pub(super) fn command() -> Command {
 
     #[cfg(target_os = "macos")]
     {
-        let path = env::var_os("PATH").unwrap_or_default();
-        let mut paths: Vec<PathBuf> = env::split_paths(&path).collect();
-        for directory in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"] {
-            let directory = PathBuf::from(directory);
-            if !paths.contains(&directory) {
-                paths.push(directory);
-            }
-        }
-        if let Ok(path) = env::join_paths(paths) {
-            command.env("PATH", path);
-        }
+        command.env("PATH", mac_git_path());
     }
     #[cfg(windows)]
     {
@@ -150,6 +140,19 @@ pub(super) fn command() -> Command {
         command.creation_flags(0x08000000);
     }
     command
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn mac_git_path() -> OsString {
+    let path = env::var_os("PATH").unwrap_or_default();
+    let mut paths: Vec<PathBuf> = env::split_paths(&path).collect();
+    for directory in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"] {
+        let directory = PathBuf::from(directory);
+        if !paths.contains(&directory) {
+            paths.push(directory);
+        }
+    }
+    env::join_paths(paths).unwrap_or(path)
 }
 
 pub(super) struct Output {

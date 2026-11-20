@@ -61,6 +61,43 @@ it.each([3, 5, 32])("recognizes and resolves configured %i-character markers", a
   expect(action).toHaveBeenCalledWith(expect.objectContaining({ text: `${prefix}current\n` }));
 });
 
+it("keeps Markdown underlines inside a diff3 side when accepting it", async () => {
+  const { action, save } = await setup(
+    "<<<<<<< HEAD\r\nTitle\r\n============\r\ncurrent\r\n||||||| base\r\nold\r\n=======\r\nincoming\r\n>>>>>>> topic\r\n",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Accept current" }));
+  fireEvent.click(save);
+  expect(action).toHaveBeenCalledWith(
+    expect.objectContaining({ text: "Title\r\n============\r\ncurrent\r\n" }),
+  );
+});
+
+it("keeps the outer conflict when a side contains a wider opening marker", async () => {
+  const { action, save } = await setup(
+    "<<<<<<< HEAD\ncurrent\n=======\n<<<<<<<< example from a patch\nincoming\n>>>>>>> topic\n",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Accept current" }));
+  fireEvent.click(save);
+  expect(action).toHaveBeenCalledWith(expect.objectContaining({ text: "current\n" }));
+});
+
+it("recognizes a complete conflict after a standalone wider marker", async () => {
+  await setup(
+    "<<<<<<<< documented example\n<<<<<<< HEAD\ncurrent\n=======\nincoming\n>>>>>>> topic\n",
+  );
+  expect(screen.getByRole("button", { name: "Accept incoming" })).toBeTruthy();
+});
+
+it.each([
+  "<<<<<<< HEAD\nTitle\n=======\ncurrent\n=======\nincoming\n>>>>>>> topic\n",
+  "<<<<<<< HEAD\n<<<<<<<< example\na\n========\nb\n>>>>>>>> end\n=======\nincoming\n>>>>>>> topic\n",
+  "<<<<<<< HEAD\ncurrent\n||||||| heading\ntext\n||||||| base\nbase\n=======\nincoming\n>>>>>>> topic\n",
+])("leaves an ambiguous conflict for manual resolution", async (text) => {
+  const { save } = await setup(text);
+  expect(screen.queryByRole("button", { name: "Accept incoming" })).toBeNull();
+  expect(save.disabled).toBe(true);
+});
+
 it.each([
   "<<<<<<< HEAD\ncurrent\n=======\nincoming\n",
   "current\n=======\nincoming\n>>>>>>> topic\n",

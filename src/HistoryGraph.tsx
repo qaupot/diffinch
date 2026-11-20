@@ -8,6 +8,7 @@ import {
   type RefObject,
 } from "react";
 import { useTranslation } from "./i18n";
+import GraphCommitDescription from "./GraphCommitDescription";
 import HistoryTable from "./HistoryTable";
 import {
   Archive,
@@ -55,7 +56,8 @@ const laneColor = (color: number) => `var(--lane-${color % 7})`;
 export type CommitCommand =
   | "branch"
   | "tag"
-  | "copy"
+  | "copySha"
+  | "copyTitle"
   | "cherryPick"
   | "revert"
   | "changeAuthor"
@@ -203,7 +205,7 @@ export default function HistoryGraph({
     stashes,
     status: { head },
   } = repo;
-  const [menu, setMenu] = useState<{ id: string; x?: number; y?: number } | null>(null);
+  const [menu, setMenu] = useState<{ id: string; point?: { x: number; y: number } } | null>(null);
   const [branchTarget, setBranchTarget] = useState("");
   const menuButton = useRef<HTMLButtonElement>(null);
   const menuPanel = useRef<HTMLDivElement>(null);
@@ -268,6 +270,7 @@ export default function HistoryGraph({
   );
 
   const width = laneX(graph.width - 1) + 13;
+  const selectedCommit = commits.find(({ id }) => id === selectedId);
   const menuCommit = menu ? commits.find(({ id }) => id === menu.id) : undefined;
   const actionableBranches = menuCommit
     ? (refs.get(menuCommit.id) ?? []).flatMap((ref) =>
@@ -293,9 +296,32 @@ export default function HistoryGraph({
     }
   }, [selectedId, rows.start, rows.end]);
 
+  useLayoutEffect(() => {
+    const panel = menuPanel.current;
+    const point = menu?.point;
+    if (!point || !panel) return;
+    const place = () => {
+      const { width, height } = panel.getBoundingClientRect();
+      panel.style.left = `${Math.max(8, Math.min(point.x, innerWidth - width - 8))}px`;
+      panel.style.top = `${Math.max(8, Math.min(point.y, innerHeight - height - 8))}px`;
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(panel);
+    window.addEventListener("resize", place);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", place);
+      panel.style.removeProperty("left");
+      panel.style.removeProperty("top");
+    };
+  }, [menu]);
+
   useEffect(() => {
     if (!menu) return;
-    menuPanel.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+    menuPanel.current
+      ?.querySelector<HTMLButtonElement>("button:not(:disabled)")
+      ?.focus({ preventScroll: true });
     function outside(event: PointerEvent) {
       if (
         !menuPanel.current?.contains(event.target as Node) &&
@@ -331,10 +357,10 @@ export default function HistoryGraph({
       rows.reveal(entries.findIndex((entry) => entry.id === selectedId));
   }
 
-  function openMenu(id: string, trigger: HTMLElement, x?: number, y?: number) {
+  function openMenu(id: string, trigger: HTMLElement, point?: { x: number; y: number }) {
     focusReturn.current = trigger;
     setBranchTarget("");
-    setMenu({ id, x, y });
+    setMenu({ id, point });
   }
 
   function selectEntry(entry: (typeof entries)[number]) {
@@ -403,7 +429,7 @@ export default function HistoryGraph({
             <button
               ref={menuButton}
               className="icon-button"
-              disabled={!commits.some(({ id }) => id === selectedId)}
+              disabled={!selectedCommit}
               title={t("commitActions")}
               aria-label={t("commitActions")}
               aria-expanded={!!menu}
@@ -416,15 +442,7 @@ export default function HistoryGraph({
             {menu && menuCommit && (
               <div
                 ref={menuPanel}
-                className={`dropdown graph-menu${menu.x === undefined ? "" : " graph-menu-context"}`}
-                style={
-                  menu.x === undefined
-                    ? undefined
-                    : {
-                        left: `clamp(8px, ${menu.x}px, calc(100vw - 223px))`,
-                        top: `clamp(8px, ${menu.y}px, calc(100vh - min(375px, 70vh)))`,
-                      }
-                }
+                className={`dropdown graph-menu${menu.point ? " graph-menu-context" : ""}`}
               >
                 <div className="menu-label">{menuCommit.shortId}</div>
                 <button
@@ -441,9 +459,16 @@ export default function HistoryGraph({
                   <TagIcon size={15} />
                   {t("createTagHere")}
                 </button>
-                <button onClick={() => runCommand(() => onCommitCommand("copy", menuCommit))}>
+                <button onClick={() => runCommand(() => onCommitCommand("copySha", menuCommit))}>
                   <Copy size={15} />
                   {t("copyCommitSha")}
+                </button>
+                <button
+                  disabled={!menuCommit.subject}
+                  onClick={() => runCommand(() => onCommitCommand("copyTitle", menuCommit))}
+                >
+                  <Copy size={15} />
+                  {t("copyCommitTitle")}
                 </button>
                 <button
                   disabled={!canChange || !head || menuCommit.parents.length > 1}
@@ -684,12 +709,7 @@ export default function HistoryGraph({
                   event.preventDefault();
                   selectEntry(entry);
                   if (!commit) return;
-                  openMenu(
-                    commit.id,
-                    event.currentTarget,
-                    event.clientX || undefined,
-                    event.clientY,
-                  );
+                  openMenu(commit.id, event.currentTarget, { x: event.clientX, y: event.clientY });
                 }}
                 onKeyDown={(event) => {
                   if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
@@ -800,6 +820,9 @@ export default function HistoryGraph({
           </div>
         )}
       </div>
+      {selectedCommit && (
+        <GraphCommitDescription key={selectedCommit.id} path={repo.path} commit={selectedCommit} />
+      )}
     </section>
   );
 }

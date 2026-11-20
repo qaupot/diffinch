@@ -1,14 +1,33 @@
 use super::{
     model::{PushLease, RemoteRef, RemoteRefKind, RemoteRefs, Status},
-    process::execute,
+    process::{execute, Output},
     refs::validate_oid,
     string, trim_line, GitError, Repo, Result,
 };
 use std::{
     collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
+    hash::{BuildHasher, Hash, Hasher, RandomState},
     process::Command,
 };
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReviewedOperation {
+    List,
+    Delete,
+    ForcePush,
+}
+
+struct ReviewedCommand {
+    git: Command,
+    destination: String,
+    _hooks: Option<tempfile::TempDir>,
+}
+
+impl ReviewedCommand {
+    fn execute(self) -> Result<Output> {
+        execute(self.git, &[], None)
+    }
+}
 
 struct PushPlan {
     lease: PushLease,
@@ -55,7 +74,10 @@ impl Repo {
         if validate_oid(&expected).is_err() {
             return Ok(None);
         }
-        let Some(url) = self.single_push_url(remote)? else {
+        let Some(url) = self
+            .single_push_url(remote)?
+            .and_then(|url| String::from_utf8(url).ok())
+        else {
             return Ok(None);
         };
         Ok(Some(PushPlan {
@@ -80,21 +102,21 @@ impl Repo {
         }
         // Use the resolved destination so a remote configuration change cannot
         // redirect the push after validation.
-        let mut git = self.push_command(&lease.remote, &plan.url)?;
-        git.args([
+        let mut command =
+            self.reviewed_command(&lease.remote, &plan.url, ReviewedOperation::ForcePush)?;
+        command.git.args([
             "--progress",
             "--no-mirror",
             "--no-follow-tags",
             "--recurse-submodules=no",
             &format!("--force-with-lease={}:{}", lease.target, lease.expected),
             "--",
-            &plan.url,
+            &command.destination,
             &format!("{}:{}", lease.head, lease.target),
         ]);
-        execute(git, &[], None)?;
-        // Pushing by URL does not update the named remote's tracking ref. The
-        // push already succeeded, so this local refresh is best effort; the
-        // expected old value protects a newer fetch or a deleted tracking ref.
+        command.execute()?;
+        // Refresh the named tracking ref only if it still has the reviewed tip.
+        // A fetch or a hook may have updated or removed it during the push.
         let _ = self.run([
             "update-ref",
             "--no-deref",
@@ -126,21 +148,94 @@ impl Repo {
             .collect())
     }
 
-    fn push_command(&self, remote: &str, url: &str) -> Result<Command> {
-        let mut git = self.command();
-        // Using a pinned URL bypasses remote.<name> transport options. Apply
-        // those explicitly, including an empty proxy that disables inheritance.
-        for (remote_key, http_key) in [("proxy", "proxy"), ("proxyauthmethod", "proxyAuthMethod")] {
-            if let Some(value) = self.remote_config_values(remote, remote_key)?.last() {
-                git.args(["-c", &format!("http.{url}.{http_key}={value}")]);
+    // get-url already applied Git's rewrite rules. Hand Git a fresh token so
+    // it expands to exactly the reviewed endpoint once, even with chained rules.
+    fn reviewed_command(
+        &self,
+        remote: &str,
+        url: &str,
+        operation: ReviewedOperation,
+    ) -> Result<ReviewedCommand> {
+        let alias = format!("diffinch-{:016x}", RandomState::new().hash_one(url));
+        let token = format!("{alias}:");
+        let key = if operation == ReviewedOperation::List {
+            "url"
+        } else {
+            "pushurl"
+        };
+        let subcommand = if operation == ReviewedOperation::List {
+            "ls-remote"
+        } else {
+            "push"
+        };
+        let configure = |name: &str, reset: bool| {
+            let mut git = self.command();
+            git.env("DIFFINCH_REVIEWED_REMOTE", &token).arg(format!(
+                "--config-env=url.{url}.insteadOf=DIFFINCH_REVIEWED_REMOTE"
+            ));
+            let pinned = format!("--config-env=remote.{name}.{key}=DIFFINCH_REVIEWED_REMOTE");
+            if reset {
+                // Include a previous value so the probe also tests replacement
+                // when the original remote had no explicit pushurl.
+                git.arg(&pinned).env("DIFFINCH_EMPTY_URL", "").arg(format!(
+                    "--config-env=remote.{name}.{key}=DIFFINCH_EMPTY_URL"
+                ));
+            }
+            git.arg(pinned);
+            git
+        };
+        // Keep the original remote name, hooks, and transport configuration
+        // when Git supports replacing its URL list. Older Git appends values.
+        // A force push updates its tracking ref separately with compare-and-swap.
+        if operation != ReviewedOperation::ForcePush {
+            let mut probe = configure(remote, true);
+            probe.args(["remote", "get-url"]);
+            if operation == ReviewedOperation::Delete {
+                probe.arg("--push");
+            }
+            probe.args(["--all", "--", remote]);
+            let output = execute(probe, &[], None)?;
+            if !output.truncated && trim_line(&output.bytes) == url.as_bytes() {
+                let mut git = configure(remote, true);
+                git.arg(subcommand);
+                return Ok(ReviewedCommand {
+                    git,
+                    destination: remote.into(),
+                    _hooks: None,
+                });
             }
         }
-        git.arg("push");
-        // Git uses the first receivepack value when multiple scopes specify it.
-        if let Some(value) = self.remote_config_values(remote, "receivepack")?.first() {
-            git.arg(format!("--receive-pack={value}"));
+
+        let mut git = configure(&alias, false);
+        if key == "pushurl" {
+            git.args(["-c", &format!("remote.{alias}.url={token}")]);
         }
-        Ok(git)
+        for field in [
+            "proxy",
+            "proxyAuthMethod",
+            "receivepack",
+            "uploadpack",
+            "vcs",
+            "fetch",
+        ] {
+            if field == "fetch" && operation != ReviewedOperation::Delete {
+                continue;
+            }
+            for value in self.remote_config_values(remote, field)? {
+                git.args(["-c", &format!("remote.{alias}.{field}={value}")]);
+            }
+        }
+        let hooks = if operation == ReviewedOperation::List {
+            None
+        } else {
+            Some(self.pinned_push_hooks(&mut git, remote, &alias)?)
+        };
+        git.arg(subcommand);
+        Ok(ReviewedCommand {
+            git,
+            destination: alias,
+            _hooks: hooks,
+        })
     }
 
     pub(super) fn tracked_remote(&self, remote: &str) -> Result<()> {
@@ -152,29 +247,36 @@ impl Repo {
     }
 
     pub(super) fn remote_push_url(&self, remote: &str) -> Result<String> {
-        self.single_push_url(remote)?
-            .ok_or_else(|| "multiplePushDestinations".into())
+        let url = self
+            .single_push_url(remote)?
+            .ok_or("multiplePushDestinations")?;
+        String::from_utf8(url).map_err(|_| "pathEncoding".into())
     }
 
-    fn single_push_url(&self, remote: &str) -> Result<Option<String>> {
+    fn single_push_url(&self, remote: &str) -> Result<Option<Vec<u8>>> {
         self.tracked_remote(remote)?;
-        let urls = self.text(["remote", "get-url", "--push", "--all", "--", remote])?;
-        if urls.is_empty() || urls.contains('\n') {
-            return Ok(None);
+        let output = self.run(["remote", "get-url", "--push", "--all", "--", remote])?;
+        if output.truncated {
+            return Err("tooMuchData".into());
         }
-        Ok(Some(urls))
+        let urls = trim_line(&output.bytes);
+        Ok((!urls.is_empty() && !urls.contains(&b'\n')).then(|| urls.to_vec()))
     }
 
     pub fn remote_refs(&self, remote: &str, kind: RemoteRefKind) -> Result<RemoteRefs> {
         let url = self.remote_push_url(remote)?;
-        let refs = self.text([
-            "ls-remote",
+        let mut command = self.reviewed_command(remote, &url, ReviewedOperation::List)?;
+        command.git.args([
             "--refs",
             "--",
-            &url,
+            &command.destination,
             &format!("{}*", kind.prefix()),
-        ])?;
-        let refs = refs
+        ]);
+        let output = command.execute()?;
+        if output.truncated {
+            return Err("tooMuchData".into());
+        }
+        let refs = string(&output.bytes)
             .lines()
             .filter_map(|line| {
                 let (tip, reference) = line.split_once('\t')?;
@@ -202,21 +304,23 @@ impl Repo {
     ) -> Result<()> {
         self.check_ref(kind.prefix(), name)?;
         validate_oid(tip)?;
-        if push_destination(&self.remote_push_url(remote)?) != destination {
+        let url = self.remote_push_url(remote)?;
+        if push_destination(&url) != destination {
             return Err("stalePushDestination".into());
         }
         let reference = format!("{}{name}", kind.prefix());
-        self.run([
-            "push",
+        let mut command = self.reviewed_command(remote, &url, ReviewedOperation::Delete)?;
+        command.git.args([
             "--progress",
             "--no-mirror",
             "--no-follow-tags",
             "--recurse-submodules=no",
             &format!("--force-with-lease={reference}:{tip}"),
             "--",
-            remote,
+            &command.destination,
             &format!(":{reference}"),
-        ])?;
+        ]);
+        command.execute()?;
         Ok(())
     }
 }
@@ -303,6 +407,90 @@ mod tests {
     use crate::git::{model::Action, tests::repo};
 
     #[test]
+    fn listing_and_deletion_use_the_reviewed_endpoint_after_rewrites_or_retargeting() {
+        use crate::git::tests::{bare_remote, commit_file};
+        let (_dir, repo) = repo();
+        let reviewed = bare_remote();
+        let other = bare_remote();
+        let reviewed_url = reviewed.path().to_str().unwrap();
+        let other_url = other.path().to_str().unwrap();
+        let tip = commit_file(&repo, "notes", "base", "Base");
+        let remote = "review=origin";
+        for url in [reviewed_url, other_url] {
+            repo.run(["push", url, "HEAD:refs/tags/shared"]).unwrap();
+        }
+        repo.run(["push", other_url, "HEAD:refs/tags/other"])
+            .unwrap();
+        repo.run(["remote", "add", remote, "reviewed:"]).unwrap();
+        repo.run([
+            "config",
+            &format!("url.{reviewed_url}.insteadOf"),
+            "reviewed:",
+        ])
+        .unwrap();
+        repo.run([
+            "config",
+            &format!("url.{other_url}.insteadOf"),
+            reviewed_url,
+        ])
+        .unwrap();
+        let listed = repo.remote_refs(remote, RemoteRefKind::Tag).unwrap();
+        assert_eq!(listed.refs.len(), 1);
+        assert_eq!(listed.refs[0].name, "shared");
+        assert_eq!(listed.url, reviewed_url);
+
+        let mut command = repo
+            .reviewed_command(remote, reviewed_url, ReviewedOperation::Delete)
+            .unwrap();
+        repo.run(["remote", "set-url", "--push", remote, other_url])
+            .unwrap();
+        command.git.args([
+            &format!("--force-with-lease=refs/tags/shared:{tip}"),
+            "--",
+            &command.destination,
+            ":refs/tags/shared",
+        ]);
+        command.execute().unwrap();
+        assert!(repo
+            .run([
+                "-C",
+                reviewed_url,
+                "show-ref",
+                "--verify",
+                "refs/tags/shared"
+            ])
+            .is_err());
+        assert_eq!(
+            repo.text(["-C", other_url, "rev-parse", "refs/tags/shared"])
+                .unwrap(),
+            tip
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unrepresentable_push_url_never_becomes_a_different_reviewed_destination() {
+        use crate::git::tests::{bare_remote, commit_file};
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+        let (_dir, repo) = repo();
+        let remote = bare_remote();
+        commit_file(&repo, "notes", "base", "Base");
+        repo.run(["remote", "add", "origin", remote.path().to_str().unwrap()])
+            .unwrap();
+        repo.run(["push", "-u", "origin", "HEAD:main"]).unwrap();
+        repo.run([
+            OsStr::new("config"),
+            OsStr::new("remote.origin.pushurl"),
+            OsStr::from_bytes(b"example-\xff"),
+        ])
+        .unwrap();
+        assert!(repo.snapshot().unwrap().push_lease.is_none());
+        assert!(repo
+            .remote_refs("origin", RemoteRefKind::Tag)
+            .is_err_and(|error| error.key == "pathEncoding"));
+    }
+
+    #[test]
     fn pinned_push_honors_remote_proxy_overrides_including_an_empty_proxy() {
         for use_proxy in [true, false] {
             let (_dir, repo) = repo();
@@ -323,14 +511,16 @@ mod tests {
                 ""
             };
             repo.run(["config", "remote.origin.proxy", proxy]).unwrap();
-            let mut git = repo.push_command("origin", url).unwrap();
-            git.env("no_proxy", "").env("NO_PROXY", "").args([
+            let mut command = repo
+                .reviewed_command("origin", url, ReviewedOperation::ForcePush)
+                .unwrap();
+            command.git.env("no_proxy", "").env("NO_PROXY", "").args([
                 "--dry-run",
                 "--",
-                url,
+                &command.destination,
                 "HEAD:refs/heads/main",
             ]);
-            let error = execute(git, &[], None).err().unwrap();
+            let error = command.execute().err().unwrap();
             let detail = error.detail.unwrap();
             assert!(!detail.contains("inherited.invalid"), "{detail}");
             assert_eq!(detail.contains("selected.invalid"), use_proxy, "{detail}");

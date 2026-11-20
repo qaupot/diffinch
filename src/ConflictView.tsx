@@ -4,16 +4,55 @@ import { GitMerge } from "./icons";
 import { git, type Action, type Conflict, type FileChange } from "./lib/git";
 
 function conflictSections(text: string, markerSize: number) {
-  const source =
-    /^(<{7,})[^\n]*\n([\s\S]*?)(?:^\|{7,}[^\n]*\n[\s\S]*?)?^={7,}\r?\n([\s\S]*?)^>{7,}[^\n]*(?:\n|$)/
-      .source;
-  const pattern = new RegExp(source.replaceAll("{7,}", `{${markerSize},}`), "gm");
-  return [...text.matchAll(pattern)].map((match) => ({
-    start: match.index,
-    end: match.index + match[0].length,
-    current: match[2],
-    incoming: match[3],
-  }));
+  const sections = [];
+  const blocks = new Map<
+    number,
+    {
+      start: number;
+      currentStart: number;
+      base?: number;
+      separator?: { start: number; end: number };
+    } | null
+  >();
+  for (const match of text.matchAll(/^(<+|\|+|=+|>+)( [^\r\n]*)?\r?(?:\n|$)/gm)) {
+    const marker = match[1];
+    const width = marker.length;
+    if (width < markerSize) continue;
+    const start = match.index;
+    const end = start + match[0].length;
+    const block = blocks.get(width);
+    if (marker[0] === "<") {
+      blocks.set(width, block === undefined ? { start, currentStart: end } : null);
+    } else if (marker[0] === ">") {
+      if (block?.separator) {
+        sections.push({
+          start: block.start,
+          end,
+          current: text.slice(block.currentStart, block.base ?? block.separator.start),
+          incoming: text.slice(block.separator.end, start),
+        });
+      }
+      blocks.delete(width);
+    } else if (block && marker[0] === "|") {
+      if (block.base !== undefined || block.separator) blocks.set(width, null);
+      else block.base = start;
+    } else if (block && marker[0] === "=" && !match[2]) {
+      if (block.separator) blocks.set(width, null);
+      else block.separator = { start, end };
+    }
+  }
+
+  // A literal marker of another width can occur inside either side. If two
+  // complete interpretations overlap, leave both for manual resolution.
+  let previousEnd = 0;
+  return sections
+    .sort((a, b) => a.start - b.start)
+    .filter((section, index, all) => {
+      const separate =
+        previousEnd <= section.start && section.end <= (all[index + 1]?.start ?? Infinity);
+      previousEnd = Math.max(previousEnd, section.end);
+      return separate;
+    });
 }
 
 export default function ConflictView({

@@ -30,6 +30,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   vi.spyOn(git, "jsonDiff").mockResolvedValue({ text: "", truncated: false, hunkToken: null });
+  vi.spyOn(git, "commitMessage").mockResolvedValue("Saved work\n");
 });
 
 function repository() {
@@ -263,7 +264,7 @@ it.each(["loaded message", "existing draft"])(
   async (mode) => {
     const message = vi
       .spyOn(git, "commitMessage")
-      .mockResolvedValue("Original A\n\nOriginal body\n");
+      .mockResolvedValue(" \t\r\nOriginal\r\nA\r\n\r\n    Original body\r\n");
     const { repo, action } = await setup();
     if (mode === "existing draft") {
       fireEvent.change(screen.getByRole("textbox", { name: "Commit summary" }), {
@@ -305,6 +306,7 @@ it.each(["loaded message", "existing draft"])(
         expect.objectContaining({
           kind: "commit",
           summary: "Original A",
+          description: mode === "loaded message" ? "    Original body" : "",
           amend: { branch: "main", head: later.status.head },
         }),
         expect.any(String),
@@ -622,6 +624,84 @@ it.each(deletions)(
     expect(screen.queryByRole("button", { name: remove })).toBeNull();
   },
 );
+
+it("keeps a tall graph context menu inside the window at the pointer's edge", async () => {
+  await setup();
+  fireEvent.click(screen.getByRole("button", { name: "Commit graph" }));
+  const row = screen.getByRole("button", { name: /^Saved work,/ });
+  fireEvent.contextMenu(row, { clientX: 0, clientY: innerHeight - 1 });
+  const panel = screen.getByRole("button", { name: "Copy commit title" }).parentElement!;
+  const rect = vi.spyOn(panel, "getBoundingClientRect");
+  rect.mockReturnValue(new DOMRect(0, 0, 214, 480));
+  fireEvent(window, new Event("resize"));
+  expect(panel.style.left).toBe("8px");
+  expect(panel.style.top).toBe(`${innerHeight - 480 - 8}px`);
+});
+
+it("copies the graph commit's title and SHA separately and reports clipboard failures", async () => {
+  const writeText = vi.fn<Clipboard["writeText"]>().mockResolvedValue(undefined);
+  vi.spyOn(window, "navigator", "get").mockReturnValue(
+    Object.create(navigator, { clipboard: { value: { writeText } } }),
+  );
+  const { repo } = await setup();
+  const commit = repo.commits[0];
+  fireEvent.click(screen.getByRole("button", { name: "Commit graph" }));
+  const row = screen.getByRole("button", { name: /^Saved work,/ });
+  fireEvent.contextMenu(row);
+  fireEvent.click(screen.getByRole("button", { name: "Copy commit title" }));
+  expect(writeText).toHaveBeenLastCalledWith(commit.subject);
+  expect(await screen.findByText("Commit title copied")).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: "Commit actions" }));
+  fireEvent.click(screen.getByRole("button", { name: "Copy commit SHA" }));
+  expect(writeText).toHaveBeenLastCalledWith(commit.id);
+  expect(await screen.findByText("Commit SHA copied")).toBeTruthy();
+
+  writeText.mockRejectedValueOnce(new Error("Permission denied"));
+  fireEvent.contextMenu(row);
+  fireEvent.click(screen.getByRole("button", { name: "Copy commit title" }));
+  expect((await screen.findByRole("alert")).textContent).toContain(
+    "Couldn’t copy the commit title.\nSaved work",
+  );
+});
+
+it("shows the selected commit body beneath the graph and ignores superseded reads", async () => {
+  const repo = repository();
+  const tip = repo.commits[0];
+  const parentId = "b".repeat(40);
+  tip.parents = [parentId];
+  repo.commits.push({
+    ...tip,
+    id: parentId,
+    shortId: parentId.slice(0, 7),
+    subject: "Earlier work",
+    parents: [],
+  });
+  const pending = deferred<string>();
+  const read = vi
+    .mocked(git.commitMessage)
+    .mockReturnValueOnce(pending.promise)
+    .mockResolvedValueOnce("Earlier\r\nwork\r\n\r\n  First paragraph\r\n\r\nLast paragraph\r\n");
+  await setup(repo);
+  fireEvent.click(screen.getByRole("button", { name: "Commit graph" }));
+  const graph = within(screen.getByRole("region", { name: "Commit graph" }));
+  const description = () => graph.getByRole("region", { name: "Commit description" });
+  const tipRow = graph.getByRole("button", { name: /^Saved work,/ });
+  fireEvent.click(tipRow);
+  expect(read).toHaveBeenCalledWith(repo.path, tip.id);
+  expect(within(description()).getByRole("status").textContent).toBe("Loading description…");
+  fireEvent.keyDown(tipRow, { key: "ArrowDown" });
+  expect(read).toHaveBeenCalledWith(repo.path, parentId);
+  const body = await within(description()).findByText("First paragraph Last paragraph");
+  expect(body.textContent).toBe("  First paragraph\r\n\r\nLast paragraph");
+  await act(async () => pending.resolve("Saved work\n\nSuperseded body"));
+  expect(description().textContent).not.toContain("Superseded body");
+
+  fireEvent.click(tipRow);
+  expect(await within(description()).findByText("No description")).toBeTruthy();
+  fireEvent.click(graph.getByRole("button", { name: /^Current changes,/ }));
+  expect(graph.queryByRole("region", { name: "Commit description" })).toBeNull();
+});
 
 it("shows references in the Labels column and leaves it empty on rows without references", async () => {
   const repo = repository();

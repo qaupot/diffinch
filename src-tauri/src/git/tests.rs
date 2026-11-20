@@ -93,6 +93,24 @@ fn root_commit_reviews_ignore_the_log_show_root_preference() {
     assert_eq!(history["commits"][0]["id"], id);
 }
 
+#[test]
+fn preserves_indentation_on_the_first_line_of_an_amended_description() {
+    let (_dir, repo) = repo();
+    commit_file(&repo, "notes", "initial", "Initial");
+    repo.action(Action::Commit {
+        summary: "New subject".into(),
+        description: "    first line\n    second line".into(),
+        sign: false,
+        amend: Some(head_target(&repo)),
+    })
+    .unwrap();
+    let head = repo.text(["rev-parse", "HEAD"]).unwrap();
+    assert_eq!(
+        repo.commit_message(&head).unwrap(),
+        "New subject\n\n    first line\n    second line\n"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn cancels_a_commit_hook_and_preserves_the_index() {
@@ -853,7 +871,7 @@ fn force_push_lease_rejects_a_moved_remote_and_fetch_prunes_deleted_refs() {
         .is_err());
 }
 
-fn bare_remote() -> tempfile::TempDir {
+pub(super) fn bare_remote() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let mut git = command();
     git.current_dir(dir.path())
@@ -937,6 +955,14 @@ fn force_push_uses_the_reviewed_push_url_when_it_differs_from_fetch() {
         .unwrap();
     repo.run(["remote", "set-url", "--push", "origin", push_url])
         .unwrap();
+    // Git ignores pushInsteadOf for an explicit pushurl. Reapplying it to
+    // the reviewed URL here would send the force push to the fetch server.
+    repo.run([
+        "config",
+        &format!("url.{fetch_url}.pushInsteadOf"),
+        push_url,
+    ])
+    .unwrap();
     repo.action(amend_action(&repo)).unwrap();
     let local = repo.text(["rev-parse", "HEAD"]).unwrap();
     let lease = repo.snapshot().unwrap().push_lease.unwrap();
@@ -997,6 +1023,215 @@ fn force_push_honors_the_remote_receive_command_without_changing_its_destination
     assert_eq!(
         repo.text(["ls-remote", url, "refs/heads/main"]).unwrap(),
         format!("{head}\trefs/heads/main")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn force_push_runs_custom_pre_push_with_the_reviewed_remote_and_update() {
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    let (dir, repo) = repo();
+    let remote = bare_remote();
+    let url = remote.path().to_str().unwrap();
+    let name = "team=upstream";
+    let initial = commit_file(&repo, "notes", "Initial", "Initial");
+    repo.run(["remote", "add", name, url]).unwrap();
+    repo.run(["push", "--set-upstream", name, "HEAD:refs/heads/main"])
+        .unwrap();
+    repo.action(amend_action(&repo)).unwrap();
+    let lease = repo.snapshot().unwrap().push_lease.unwrap();
+    let head = lease.head.clone();
+    let tracking = format!("refs/remotes/{name}/main");
+
+    let hooks = dir.path().join("custom hooks");
+    fs::create_dir(&hooks).unwrap();
+    let hook = hooks.join("pre-push");
+    fs::write(
+        &hook,
+        r#"#!/bin/sh
+printf '%s\n' "$1" "$2" >> hook-args
+cat >> hook-stdin
+test "$1" = "team=upstream" &&
+test "$(git remote get-url --push -- "$1")" = "$2" &&
+test "$(git rev-parse '@{upstream}')" = "$(git rev-parse refs/remotes/team=upstream/main)" &&
+test -f allow-push
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    repo.run(["config", "core.hooksPath", "custom hooks"])
+        .unwrap();
+    let arguments = format!("{name}\n{url}\n");
+    let update = format!("{head} {head} refs/heads/main {initial}\n");
+
+    assert!(repo
+        .action(Action::ForcePush {
+            lease: repo.working_state().unwrap().push_lease.unwrap()
+        })
+        .is_err());
+    assert_eq!(
+        repo.text(["-C", url, "rev-parse", "refs/heads/main"])
+            .unwrap(),
+        initial
+    );
+    assert_eq!(repo.text(["rev-parse", &tracking]).unwrap(), initial);
+    assert_eq!(
+        fs::read_to_string(dir.path().join("hook-args")).unwrap(),
+        arguments
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("hook-stdin")).unwrap(),
+        update
+    );
+
+    fs::write(dir.path().join("allow-push"), "").unwrap();
+    let receiver_hooks = remote.path().join("receiver hooks");
+    fs::create_dir(&receiver_hooks).unwrap();
+    let receive = receiver_hooks.join("pre-receive");
+    fs::write(
+        &receive,
+        "#!/bin/sh\ncat >> received\ntest -f allow-update\n",
+    )
+    .unwrap();
+    fs::set_permissions(&receive, fs::Permissions::from_mode(0o755)).unwrap();
+    repo.run(["-C", url, "config", "core.hooksPath", "receiver hooks"])
+        .unwrap();
+    assert!(repo.action(Action::ForcePush { lease }).is_err());
+    assert_eq!(repo.text(["rev-parse", &tracking]).unwrap(), initial);
+    fs::write(remote.path().join("allow-update"), "").unwrap();
+    for _ in 0..2 {
+        // Native Git also invokes the hook with empty stdin for an up-to-date push.
+        repo.action(Action::ForcePush {
+            lease: repo.working_state().unwrap().push_lease.unwrap(),
+        })
+        .unwrap();
+    }
+    assert_eq!(
+        repo.text(["-C", url, "rev-parse", "refs/heads/main"])
+            .unwrap(),
+        head
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("hook-args")).unwrap(),
+        arguments.repeat(4)
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("hook-stdin")).unwrap(),
+        update.repeat(3)
+    );
+    assert_eq!(
+        fs::read_to_string(remote.path().join("received")).unwrap(),
+        format!("{initial} {head} refs/heads/main\n").repeat(2)
+    );
+}
+
+#[test]
+fn force_push_uploads_lfs_objects_to_the_named_remotes_lfs_endpoint() {
+    let (_dir, repo) = repo();
+    let remote = bare_remote();
+    let lfs = bare_remote();
+    let git_url = tauri::Url::from_directory_path(remote.path()).unwrap();
+    let lfs_url = tauri::Url::from_directory_path(lfs.path()).unwrap();
+    repo.run(["remote", "add", "team", git_url.as_str()])
+        .unwrap();
+    commit_file(&repo, "notes", "base", "Base");
+    repo.run(["push", "-u", "team", "HEAD:main"]).unwrap();
+    repo.run(["config", "remote.team.lfspushurl", lfs_url.as_str()])
+        .unwrap();
+    repo.run(["lfs", "install", "--local"]).unwrap();
+    repo.run(["lfs", "track", "*.bin"]).unwrap();
+    let contents = "LFS hook payload\n";
+    commit_file(&repo, "asset.bin", contents, "Asset");
+    let pointer = repo.text(["show", "HEAD:asset.bin"]).unwrap();
+    let (oid, _) = extensions::lfs_pointer(pointer.as_bytes()).unwrap();
+    let object = Path::new("lfs/objects")
+        .join(&oid[..2])
+        .join(&oid[2..4])
+        .join(oid);
+    repo.action(Action::ForcePush {
+        lease: repo.working_state().unwrap().push_lease.unwrap(),
+    })
+    .unwrap();
+    assert_eq!(
+        std::fs::read(lfs.path().join(&object)).unwrap(),
+        contents.as_bytes()
+    );
+    assert!(!remote.path().join(object).exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn force_push_preserves_configured_hook_order_stdin_and_veto() {
+    use std::{fs, os::unix::fs::PermissionsExt};
+    let (dir, repo) = repo();
+    let mut help = repo.command();
+    help.args(["hook", "-h"]);
+    if !string(&execute(help, &[129], None).unwrap().bytes).contains("git hook list") {
+        return; // Older Git only supports hooks from the hooks directory.
+    }
+    let remote = bare_remote();
+    let url = remote.path().to_str().unwrap();
+    let initial = commit_file(&repo, "notes", "Initial", "Initial");
+    repo.run(["remote", "add", "origin", url]).unwrap();
+    repo.run(["push", "-u", "origin", "HEAD:main"]).unwrap();
+    repo.action(amend_action(&repo)).unwrap();
+    let head = repo.text(["rev-parse", "HEAD"]).unwrap();
+    let record = dir.path().join("record hook");
+    fs::write(
+        &record,
+        r#"#!/bin/sh
+printf '%s\n' "$1" "$2" "$3" >> calls
+cat >> updates
+test "$2" = origin && test "$3" = "$(git remote get-url --push "$2")" &&
+test "$(git config core.hooksPath)" = ".git/no-test-hooks" &&
+{ test "$1" != second || test -f allow-push; }
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&record, fs::Permissions::from_mode(0o755)).unwrap();
+    for (name, label) in [
+        ("name=with equals", "first"),
+        ("veto", "second"),
+        ("disabled", "disabled"),
+    ] {
+        repo.run(["config", &format!("hook.{name}.event"), "pre-push"])
+            .unwrap();
+        repo.run([
+            "config",
+            &format!("hook.{name}.command"),
+            &format!("'./record hook' {label}"),
+        ])
+        .unwrap();
+    }
+    repo.run(["config", "hook.disabled.enabled", "false"])
+        .unwrap();
+    let hooks = dir.path().join(".git/no-test-hooks");
+    fs::create_dir_all(&hooks).unwrap();
+    let hook = hooks.join("pre-push");
+    fs::write(&hook, "#!/bin/sh\nexec './record hook' file \"$@\"\n").unwrap();
+    fs::set_permissions(hook, fs::Permissions::from_mode(0o755)).unwrap();
+    let push = || {
+        repo.action(Action::ForcePush {
+            lease: repo.working_state().unwrap().push_lease.unwrap(),
+        })
+    };
+    assert!(push().is_err());
+    assert_eq!(
+        repo.text(["-C", url, "rev-parse", "main"]).unwrap(),
+        initial
+    );
+    fs::write(dir.path().join("allow-push"), "").unwrap();
+    push().unwrap();
+    assert_eq!(
+        fs::read_to_string(dir.path().join("calls")).unwrap(),
+        ["first", "second", "file", "first", "second", "file"]
+            .map(|name| format!("{name}\norigin\n{url}\n"))
+            .concat()
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("updates")).unwrap(),
+        format!("{head} {head} refs/heads/main {initial}\n").repeat(6)
     );
 }
 
@@ -1073,6 +1308,26 @@ fn reviews_staged_and_current_changes_separately_including_untracked_files() {
 }
 
 #[test]
+fn untracked_embedded_repositories_do_not_expose_a_child_as_their_diff() {
+    let (dir, repo) = repo();
+    repo.run(["init", "--quiet", "nested"]).unwrap();
+    std::fs::write(dir.path().join("nested/null"), "nested contents\n").unwrap();
+    std::fs::write(dir.path().join("notes"), "ordinary file\n").unwrap();
+    let nested = repo
+        .status()
+        .unwrap()
+        .files
+        .into_iter()
+        .find(|f| f.path == "nested")
+        .unwrap();
+    let diff = repo.diff(&nested.id, false).unwrap();
+    assert!(diff.text.is_empty() && diff.images.is_empty());
+    let combined = repo.changes_diff(false).unwrap();
+    assert!(combined.text.contains("+ordinary file"));
+    assert!(!combined.text.contains("nested contents"));
+}
+
+#[test]
 fn limits_combined_untracked_diffs_and_handles_staged_renames() {
     let (dir, repo) = repo();
     std::fs::write(dir.path().join("before.txt"), "original\n").unwrap();
@@ -1083,6 +1338,23 @@ fn limits_combined_untracked_diffs_and_handles_staged_renames() {
     assert!(index.text.contains("rename from before.txt"));
     assert!(index.text.contains("rename to after.txt"));
     assert!(repo.changes_diff(false).unwrap().text.is_empty());
+
+    std::fs::write(dir.path().join("after.txt"), "edited after rename\n").unwrap();
+    let renamed = repo.status().unwrap().files.remove(0);
+    let worktree = repo.diff(&renamed.id, false).unwrap();
+    repo.action(Action::Hunk {
+        id: renamed.id,
+        staged: false,
+        index: 0,
+        lines: None,
+        token: worktree.hunk_token.unwrap(),
+        page: None,
+    })
+    .unwrap();
+    assert_eq!(
+        repo.text(["show", ":after.txt"]).unwrap(),
+        "edited after rename"
+    );
 
     let content = "line of text\n".repeat(OUTPUT_LIMIT / 20);
     std::fs::write(dir.path().join("large-a.txt"), &content).unwrap();
@@ -1537,6 +1809,127 @@ fn stage_and_unstage_only_selected_paths() {
     repo.action(Action::UnstageFiles { ids: staged }).unwrap();
     assert_eq!(ids('.').len(), 2);
     assert_eq!(repo.text(["ls-files"]).unwrap(), "keep.txt");
+}
+
+#[test]
+fn staging_a_file_replaced_by_a_directory_preserves_unselected_children() {
+    let (dir, repo) = repo();
+    let name = "[entry]";
+    commit_file(&repo, name, "original", "Base");
+    let path = dir.path().join(name);
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    std::fs::write(path.join("one"), "one").unwrap();
+    std::fs::write(path.join("two"), "two").unwrap();
+    for (with_child, expected) in [(false, ""), (true, "[entry]/two")] {
+        let ids = repo
+            .status()
+            .unwrap()
+            .files
+            .into_iter()
+            .filter(|f| f.path == name || (with_child && f.path == "[entry]/two"))
+            .map(|f| f.id)
+            .collect();
+        repo.action(Action::StageFiles { ids }).unwrap();
+        assert_eq!(repo.text(["ls-files"]).unwrap(), expected);
+        assert!(repo
+            .text(["diff", "--cached", "--name-status"])
+            .unwrap()
+            .contains("D\t[entry]"));
+        repo.action(Action::UnstageAll).unwrap();
+    }
+
+    repo.action(Action::StageAll).unwrap();
+    let staged = repo.run(["ls-files", "--stage", "-z"]).unwrap().bytes;
+    let parent = repo
+        .status()
+        .unwrap()
+        .files
+        .into_iter()
+        .find(|f| f.path == name)
+        .unwrap();
+    assert!(repo
+        .action(Action::Unstage { id: parent.id })
+        .is_err_and(|e| e.key == "overlappingIndexChanges"));
+    assert_eq!(
+        repo.run(["ls-files", "--stage", "-z"]).unwrap().bytes,
+        staged
+    );
+    repo.action(Action::UnstageAll).unwrap();
+    assert_eq!(repo.text(["ls-files"]).unwrap(), name);
+}
+
+#[test]
+fn unstaging_a_copy_preserves_the_sources_staged_changes() {
+    let (dir, repo) = repo();
+    let original = "one\ntwo\nthree\n";
+    commit_file(&repo, "source", original, "Base");
+    repo.run(["config", "status.renames", "copies"]).unwrap();
+    repo.run(["config", "diff.renames", "copies"]).unwrap();
+    std::fs::write(dir.path().join("copy"), original).unwrap();
+    std::fs::write(
+        dir.path().join("source"),
+        format!("{original}independent edit\n"),
+    )
+    .unwrap();
+    for batch in [false, true] {
+        repo.action(Action::StageAll).unwrap();
+        let copy = repo
+            .status()
+            .unwrap()
+            .files
+            .into_iter()
+            .find(|file| file.index == 'C')
+            .unwrap();
+        assert!(!repo
+            .diff(&copy.id, true)
+            .unwrap()
+            .text
+            .contains("independent edit"));
+        let action = if batch {
+            Action::UnstageFiles { ids: vec![copy.id] }
+        } else {
+            Action::Unstage { id: copy.id }
+        };
+        repo.action(action).unwrap();
+        assert_eq!(
+            repo.text(["diff", "--cached", "--name-only"]).unwrap(),
+            "source"
+        );
+    }
+}
+
+#[test]
+fn unstaging_preserves_unresolved_index_entries() {
+    let (dir, repo) = repo();
+    commit_file(&repo, "conflict", "base", "Base");
+    repo.run(["switch", "-c", "other"]).unwrap();
+    commit_file(&repo, "conflict", "other", "Other");
+    repo.run(["switch", "main"]).unwrap();
+    commit_file(&repo, "conflict", "main", "Main");
+    assert!(repo.run(["merge", "other"]).is_err());
+    let conflict = repo
+        .status()
+        .unwrap()
+        .files
+        .into_iter()
+        .find(|file| file.conflict)
+        .unwrap();
+    let stages = repo.text(["ls-files", "-u"]).unwrap();
+    assert!(!stages.is_empty());
+    assert!(repo
+        .action(Action::Unstage { id: conflict.id })
+        .is_err_and(|error| error.key == "changeMissing"));
+    std::fs::write(dir.path().join("separate"), "staged").unwrap();
+    repo.run(["add", "separate"]).unwrap();
+    repo.action(Action::UnstageAll).unwrap();
+    assert!(repo
+        .text(["ls-files", "--", "separate"])
+        .unwrap()
+        .is_empty());
+    assert_eq!(repo.text(["ls-files", "-u"]).unwrap(), stages);
+    repo.action(Action::UnstageAll).unwrap();
+    assert_eq!(repo.text(["ls-files", "-u"]).unwrap(), stages);
 }
 
 #[test]
@@ -2188,4 +2581,70 @@ fn creates_an_ssh_signed_commit_with_repository_settings() {
     .unwrap();
     let raw = repo.text(["cat-file", "commit", "HEAD"]).unwrap();
     assert!(raw.contains("gpgsig -----BEGIN SSH SIGNATURE-----"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_openpgp_prompt_preserves_the_commit_for_retry() {
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    let (dir, repo) = repo();
+    let head = commit_file(&repo, "notes.txt", "base\n", "Initial");
+    fs::write(dir.path().join("notes.txt"), "signed change\n").unwrap();
+    repo.action(Action::StageAll).unwrap();
+    let staged_tree = repo.text(["write-tree"]).unwrap();
+    let signer = repo.git_dir().unwrap().join("test-signer");
+    repo.run(["config", "gpg.format", "openpgp"]).unwrap();
+    repo.run(["config", "gpg.openpgp.program", signer.to_str().unwrap()])
+        .unwrap();
+    let signed_commit = || Action::Commit {
+        summary: "Signed change".into(),
+        description: String::new(),
+        sign: true,
+        amend: None,
+    };
+    for (diagnostic, expected) in [
+        (
+            "gpg: signing failed: Inappropriate ioctl for device",
+            "gpgNeedsPinentry",
+        ),
+        ("gpg: signing failed: No secret key", "gitOutput"),
+    ] {
+        fs::write(
+            &signer,
+            format!("#!/bin/sh\ncat >/dev/null\necho '{diagnostic}' >&2\nexit 1\n"),
+        )
+        .unwrap();
+        fs::set_permissions(&signer, fs::Permissions::from_mode(0o700)).unwrap();
+        let error = repo.action(signed_commit()).unwrap_err();
+        // Git before 2.40 discards the signer's stderr.
+        if error.detail.as_deref()
+            == Some("error: gpg failed to sign the data\nfatal: failed to write commit object")
+        {
+            assert_eq!(error.key, "gitOutput");
+        } else {
+            assert_eq!(error.key, expected, "{error:?}");
+        }
+        assert_eq!(repo.text(["rev-parse", "HEAD"]).unwrap(), head);
+        assert_eq!(repo.text(["write-tree"]).unwrap(), staged_tree);
+    }
+
+    // A hook can invoke GPG before Git ever tries to sign the commit.
+    let hooks = repo.git_dir().unwrap().join("hooks");
+    fs::create_dir_all(&hooks).unwrap();
+    let hook = hooks.join("pre-commit");
+    fs::write(
+        &hook,
+        "#!/bin/sh\necho 'gpg: signing failed: Inappropriate ioctl for device' >&2\nexit 1\n",
+    )
+    .unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o700)).unwrap();
+    repo.run(["config", "core.hooksPath", hooks.to_str().unwrap()])
+        .unwrap();
+    let error = repo.action(signed_commit()).unwrap_err();
+    assert_eq!(error.key, "gitOutput");
+    assert!(error
+        .detail
+        .unwrap()
+        .contains("Inappropriate ioctl for device"));
 }

@@ -198,7 +198,7 @@ export default function FindCommits({
         )}
       </div>
       {selected && (
-        <section className="find-commit-message" aria-label={t("commitDescription")}>
+        <section className="commit-message" aria-label={t("commitDescription")}>
           <strong>{selected.subject || t("noSubject")}</strong>
           <code>{selected.id}</code>
           <span>

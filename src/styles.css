@@ -3486,7 +3486,7 @@ dialog::backdrop {
   margin-left: auto;
   white-space: nowrap;
 }
-.find-commit-message {
+.commit-message {
   display: grid;
   flex: none;
   gap: 6px;
@@ -3496,15 +3496,15 @@ dialog::backdrop {
   border-top: 1px solid var(--line-strong);
   font-size: 0.6875rem;
   overflow-wrap: anywhere;
-}
-.find-commit-message > strong {
-  font-size: 0.75rem;
-}
-.find-commit-message > code {
-  font-size: 0.625rem;
   user-select: text;
 }
-.find-commit-message > p {
+.commit-message > strong {
+  font-size: 0.75rem;
+}
+.commit-message > code {
+  font-size: 0.625rem;
+}
+.commit-message > p {
   margin: 3px 0;
   white-space: pre-wrap;
   line-height: 1.6;

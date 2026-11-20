@@ -2,7 +2,7 @@ import type { CloneRequest } from "../dialogs/ActionDialog";
 import { errorMessage, useTranslation } from "../i18n";
 import type { MessageKey } from "../i18n/messages";
 import { readHiddenBranches, visibleHistory } from "../lib/branches";
-import { git, type Action, type FileChange, type Snapshot } from "../lib/git";
+import { git, mac, type Action, type FileChange, type Snapshot } from "../lib/git";
 import type { useCommitDraft } from "./CommitComposer";
 import { chooseSelection } from "./selection";
 import type { WorkspaceNotice } from "./types";
@@ -167,7 +167,20 @@ export function useGitOperations({
           "forcePush",
           "deleteRemoteRef",
         ].includes(next.kind);
-      if (needsCredentials) {
+      if (
+        !completed &&
+        mac &&
+        next.kind === "commit" &&
+        next.sign &&
+        message.key === "gpgNeedsPinentry"
+      ) {
+        dialogs.ask({
+          title: "signingSettings",
+          message: { key: "macPinentryQuestion" },
+          label: "useMacPinentry",
+          action: { kind: "configureMacPinentry" },
+        });
+      } else if (needsCredentials) {
         const remote =
           "remote" in next && typeof next.remote === "string"
             ? next.remote

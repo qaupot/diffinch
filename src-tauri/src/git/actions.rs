@@ -5,10 +5,18 @@ use super::{
     refs::validate_oid,
     trim_line, Repo, Result, OUTPUT_LIMIT,
 };
-use std::{
-    ffi::{OsStr, OsString},
-    path::Path,
-};
+use std::path::Path;
+
+fn needs_pinentry(detail: &str) -> bool {
+    let mut lines = detail.lines();
+    if !lines.any(|line| line == "error: gpg failed to sign the data:") {
+        return false;
+    }
+    lines
+        .filter_map(|line| line.trim().strip_prefix("gpg:"))
+        .any(|message| message.trim() == "signing failed: Inappropriate ioctl for device")
+}
+
 impl Repo {
     fn check_head_target(&self, target: &HeadTarget) -> Result<()> {
         let status = self.status()?;
@@ -76,27 +84,11 @@ impl Repo {
             }
             Action::RepositoryTool { action } => return self.repository_tool_action(action),
             Action::Stage { id } => {
-                let (file, paths) = self.file(&id)?;
-                self.run(
-                    ["--literal-pathspecs", "add", "-A", "--"]
-                        .iter()
-                        .map(OsStr::new)
-                        .chain(
-                            Self::working_paths(&file, &paths)
-                                .iter()
-                                .map(OsString::as_os_str),
-                        ),
-                )?;
+                self.set_files_staged(&[id], true)?;
                 "fileStaged"
             }
             Action::Unstage { id } => {
-                let (_, paths) = self.file(&id)?;
-                self.run(
-                    ["--literal-pathspecs", "reset", "--quiet", "--"]
-                        .iter()
-                        .map(OsStr::new)
-                        .chain(paths.iter().map(OsString::as_os_str)),
-                )?;
+                self.set_files_staged(&[id], false)?;
                 "fileUnstaged"
             }
             Action::StageFiles { ids } => {
@@ -112,7 +104,7 @@ impl Repo {
                 "allChangesStaged"
             }
             Action::UnstageAll => {
-                self.run(["reset", "--quiet", "--", "."])?;
+                self.unstage_all()?;
                 "allChangesUnstaged"
             }
             Action::Discard { id, token } => {
@@ -189,9 +181,17 @@ impl Repo {
                 let message = if description.trim().is_empty() {
                     format!("{}\n", summary.trim())
                 } else {
-                    format!("{}\n\n{}\n", summary.trim(), description.trim())
+                    format!("{}\n\n{}\n", summary.trim(), description.trim_end())
                 };
-                execute(git, &[], Some(message.as_bytes()))?;
+                execute(git, &[], Some(message.as_bytes())).map_err(|mut error| {
+                    if sign
+                        && error.key == "gitOutput"
+                        && error.detail.as_deref().is_some_and(needs_pinentry)
+                    {
+                        error.key = "gpgNeedsPinentry";
+                    }
+                    error
+                })?;
                 if amend.is_some() {
                     "commitAmended"
                 } else {
@@ -441,6 +441,15 @@ impl Repo {
             Action::SaveSettings { settings } => {
                 self.save_settings(settings)?;
                 "settingsSaved"
+            }
+            Action::ConfigureMacPinentry => {
+                #[cfg(target_os = "macos")]
+                {
+                    super::pinentry::configure(self)?;
+                    "macPinentryConfigured"
+                }
+                #[cfg(not(target_os = "macos"))]
+                return Err("gpgNeedsPinentry".into());
             }
             Action::ConfigureCredentialHelper {
                 remote,

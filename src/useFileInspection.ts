@@ -27,7 +27,10 @@ export function useFileInspection<K extends FileInspectionRequest["kind"]>(
     let id: string | undefined;
     let ready = false;
     const cancel = () => {
-      if (id && ready) void git.cancelTransfer(id).catch(() => {});
+      if (id && ready) {
+        void git.cancelTransfer(id).catch(() => {});
+        id = undefined;
+      }
     };
     void runTransfer(
       "operation",
@@ -42,9 +45,11 @@ export function useFileInspection<K extends FileInspectionRequest["kind"]>(
       label,
     )
       .then((result) => {
+        id = undefined;
         if (active) setLoaded({ key, result });
       })
       .catch((error: unknown) => {
+        id = undefined;
         if (active) setLoaded({ key, error: errorMessage(error) });
       });
     return () => {
